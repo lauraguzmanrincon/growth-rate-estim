@@ -13,6 +13,8 @@
 #' dayWeek: if T, the day-of-the-week effect is used. If F, the noise term is used
 #' dayWeek.prior.prec: prior for day-of-the-week effect or noise term
 #' sizeSample: samples to estimate posterior of parameters
+#' derivativeFromGP: if growth rate distribution is estimated from samples of GP derivative.
+#'   If F, dataset must have at least 7 time points between minDate and maxDate. If not, it will automatically use the numerical version.
 setParametersFn <- function(linkType,
                             prior2.sigma0 = 1,
                             prior2.lengthscale0 = 100,
@@ -24,6 +26,7 @@ setParametersFn <- function(linkType,
                             dayWeek = unitTime == "day",
                             dayWeek.prior.prec = list(theta = list(prior = 'loggamma', param = c(1, 0.01))),
                             sizeSample = sizeSample,
+                            derivativeFromGP = F,
                             computeGPProjection = F,
                             sizeGPProjection = 10){
   parameters <- list(
@@ -41,6 +44,7 @@ setParametersFn <- function(linkType,
     ),
     config = list(
       sizeSample = sizeSample,
+      derivativeFromGP = F,
       computeGPProjection = computeGPProjection,
       sizeGPProjection = sizeGPProjection
       #computeTaylorProjection = F,
@@ -50,6 +54,8 @@ setParametersFn <- function(linkType,
     return(parameters)
 }
 
+# TODO create function to check countTable before using it. It should have numberTest if BB, or create an empty one if non existant and NB.
+# It should have positives <= number tests
 
 #' countTable: data table with one row per day (of days with available data) and these columns:
 #' - numberTest: number of test on the day (>= 0)
@@ -60,25 +66,23 @@ setParametersFn <- function(linkType,
 #'              two matrices of size [days, num. samples] containing samples of the posterior of the GP and GP derivative respectively.
 #' minDate (optional): minimum date to include in the model
 #' maxDate (optional): maximum date to include in the model
-#' derivativeFromGP (optional): if growth rate distribution is estimated from samples of GP derivative.
-#'   If F, dataset must have at least 7 time points between minDate and maxDate.
-runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, minDate = NULL, maxDate = NULL, derivativeFromGP = F){
+runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxDate = NULL){
   # TODO check and complete content of parametersModel from function (i.e. if NULL then default)
   
   # Load parameters into function environment and add auxiliar variables
   # TODO remove this:
-  list2env(parametersModel$params, envir = environment())
-  list2env(parametersModel$config, envir = environment())
+  #list2env(parametersModel$params, envir = environment())
+  #list2env(parametersModel$config, envir = environment())
   levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
   
   # Create auxiliar table with dates
   if(is.null(minDate)) minDate <- min(countTable$date)
   if(is.null(maxDate)) maxDate <- max(countTable$date)
   minDay <- 1
-  maxDay <- length(seq.Date(from = minDate, to = maxDate, by = unitTime)) #as.integer(maxDate - minDate + 1)
+  maxDay <- length(seq.Date(from = minDate, to = maxDate, by = parametersModel$params$unitTime)) #as.integer(maxDate - minDate + 1)
   numDays <- maxDay #maxDay - minDay + 1
   dateTable <- data.table(dayId = minDay:maxDay,
-                          date = seq.Date(from = minDate, to = maxDate, by = unitTime))
+                          date = seq.Date(from = minDate, to = maxDate, by = parametersModel$params$unitTime))
   if(nrow(dateTable) <= 1) stop("There must be at least 2 time units between minDate and maxDate")
   
   # ---------------------------------------------------- #
@@ -86,7 +90,7 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
   # ---------------------------------------------------- #
   # Create data with all days, including the ones with missing data
   dataForModel <- data.table(dayId = minDay:maxDay,
-                             date = seq.Date(from = minDate, to = maxDate, by = unitTime),
+                             date = seq.Date(from = minDate, to = maxDate, by = parametersModel$params$unitTime),
                              numberTest = as.integer(NA),
                              positiveResults = as.integer(NA))
   setkey(dataForModel, date)
@@ -111,11 +115,11 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
   
   # - Set priors
   # Prior for day of the week
-  priorDayWeek <- dayWeek.prior.prec
+  priorDayWeek <- parametersModel$params$dayWeek.prior.prec
   # Prior for Gaussian process parameters, following (Lindgren, 2015, v63i19)
   vGP <- 2 - 1/2
-  sigma0 <- prior2.sigma0
-  range0 <- prior2.range0
+  sigma0 <- parametersModel$params$prior2.sigma0
+  range0 <- parametersModel$params$prior2.range0
   # Convert into tau and kappa:
   kappa0 <- sqrt(8*vGP)/range0
   tau0 <- sqrt(gamma(vGP)/(gamma(2)*sqrt(4*pi)))/(kappa0^(vGP)*sigma0)
@@ -124,8 +128,8 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
   spde1 <- inla.spde2.matern(mesh1d,
                              B.tau = cbind(log(tau0), basis.prior2.tau[1], basis.prior2.tau[2]),
                              B.kappa = cbind(log(kappa0), basis.prior2.kappa[1], basis.prior2.kappa[2]),
-                             theta.prior.mean = theta.prior2.mean,
-                             theta.prior.prec = theta.prior2.prec)
+                             theta.prior.mean = parametersModel$params$theta.prior2.mean,
+                             theta.prior.prec = parametersModel$params$theta.prior2.prec)
   
   # - Create stack data
   spde1.idx <- inla.spde.make.index("day", n.spde = spde1$n.spde)
@@ -136,10 +140,10 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
                                       list(dayWeek = factor(dataForModel[order(dayId), dayWeek], levels = levelsWeek)),
                                       list(dayId2 = dataForModel[order(dayId), dayId])),
                        tag = "est")
-  # Create prediction data for the next sizeGPPred days
-  sizeGPPred <- parametersModel$config$sizeGPProjection
-  predictionGPWeekday <- dateTable[dayId == max(dataForModel$dayId), weekdays(date + 1:sizeGPPred)]
-  xx <- seq(max(dataForModel$dayId) + 1, max(dataForModel$dayId) + sizeGPPred, by = 1)
+  # Create prediction data for the next parametersModel$config$sizeGPProjection days
+  daysProjection <- parametersModel$config$sizeGPProjection + 1
+  predictionGPWeekday <- dateTable[dayId == max(dataForModel$dayId), weekdays(date + 1:daysProjection)]
+  xx <- seq(max(dataForModel$dayId) + 1, max(dataForModel$dayId) + daysProjection, by = 1)
   A.xx <- inla.spde.make.A(mesh1d, xx)
   stack.pred <- inla.stack(data = list(positiveResults = NA),
                            A = list(A.xx),
@@ -149,35 +153,43 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
   
   # Fit model (using INLA)
   cat("Fitting model ... ")
-  if(dayWeek == T){
+  if(parametersModel$params$dayWeek == T){
     formula <- positiveResults ~ -1 + f(day, model = spde1) + f(dayWeek, model = 'iid', hyper = priorDayWeek, constr = T)
   }else{
     formula <- positiveResults ~ -1 + f(day, model = spde1) + f(dayId2, model = 'iid', hyper = priorDayWeek, constr = T)
   }
-  if(linkType == "BB"){
+  if(parametersModel$params$linkType == "BB"){
     # Betabinomial
-    m.spde <- inla(formula = formula, data = inla.stack.data(joint.stack),
+    objectInla <- inla(formula = formula, data = inla.stack.data(joint.stack),
                    control.predictor = list(A = inla.stack.A(joint.stack), compute = TRUE, link = 1),
                    family = "betabinomial",
                    Ntrials =  c(dataForModel[order(dayId), numberTest], rep(NA, length(xx))),
                    control.compute = list(config = TRUE),
-                   control.family = list(hyper = BB.prior.rho))
-  }else if(linkType == "NB"){
+                   control.family = list(hyper = parametersModel$params$BB.prior.rho))
+  }else if(parametersModel$params$linkType == "NB"){
     # Negative binomial
-    m.spde <- inla(formula = formula, data = inla.stack.data(joint.stack),
+    objectInla <- inla(formula = formula, data = inla.stack.data(joint.stack),
                    control.predictor = list(A = inla.stack.A(joint.stack), compute = TRUE, link = 1),
                    family = "nbinomial",
                    control.compute = list(config = TRUE),
-                   control.family = list(hyper = NB.prior.rho))
+                   control.family = list(hyper = parametersModel$params$NB.prior.rho))
   }
   
+  objectInla$dateList <- list(dateTable = dateTable, numDays = numDays, minDay = minDay, maxDay = maxDay)
+  objectInla$dataForModel <- dataForModel
+  objectInla$nonBoundaryIndices <- nonBoundaryIndices # TODO better way?
+  return(objectInla)
+}
+
+processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
+  # TODO make it faster
   # ---------------------------------------------------- #
   #                      GET SAMPLES                     #
   # ---------------------------------------------------- #
   cat("Estimating growth rate ... ")
   
   # Get samples of posterior distribution of parameters
-  sampleList <- inla.posterior.sample(sizeSample, m.spde)
+  sampleList <- inla.posterior.sample(parametersModel$config$sizeSample, objectInla)
   
   # Extract relevant indexes from output
   rownms <- rownames(sampleList[[1]]$latent)
@@ -185,19 +197,22 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
   #set2 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "Predictor"))
   set3 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "day"))
   set4 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "dayWeek"))
-  dayIndexInSample <- set3[nonBoundaryIndices]
+  dayIndexInSample <- set3[objectInla$nonBoundaryIndices]
   
   # Create matrix of samples (and hyperparameters/weekday effect if needed)
   matrixSampleDays <- sapply(sampleList, function(x) x$latent[dayIndexInSample,1])
-  matrixSampleHyper <- sapply(sampleList, function(x) exp(x$hyperpar))
+  #matrixSampleHyper <- sapply(sampleList, function(x) exp(x$hyperpar[c("Theta1 for day", "Theta2 for day")]))
+  matrixSampleHyperAll <- sapply(sampleList, function(x) x$hyperpar) # overdisp log(theta1) log(theta2) precision
   matrixSampleWeekday <- sapply(sampleList, function(x) x$latent[set4,1])
+  matrixSampleEta <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
   
-  # Create matrix with GP projection
-  predicIndexInSample <- set1[numDays + (1:sizeGPPred)]
+  # Create matrix with GP projection (sizeGPProjection + 1 as we lose one in the GR estimation)
+  daysProjection <- parametersModel$config$sizeGPProjection + 1
+  predicIndexInSample <- set1[objectInla$dateList$numDays + (1:daysProjection)]
   projectionGP <- sapply(sampleList, function(x) x$latent[predicIndexInSample,1]) # previous projectionGPInla
   
   # Compute derivative
-  if(derivativeFromGP == T | nrow(dateTable) < 7){
+  if(parametersModel$config$derivativeFromGP == T | nrow(objectInla$dateList$dateTable) < 7){
     # Sample from derivative
     sampleDerivatives <- getGrowthFromSamples_GP(matrixSampleGP = matrixSampleDays, samplesHyperparam = matrixSampleHyper, sigma0 = sigma0, range0 = range0)
   }else{
@@ -209,23 +224,23 @@ runModelGrowthRate <- function(countTable, parametersModel, saveSamples = F, min
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
-  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, parametersModel)
+  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll, matrixSampleEta, objectInla, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
-  setkey(dateTable, dayId)
-  listPosteriors$posteriorGrowth[dateTable, ":="(date = i.date)]
+  setkey(objectInla$dateList$dateTable, dayId)
+  listPosteriors$posteriorGrowth[objectInla$dateList$dateTable, ":="(date = i.date)]
   
   setkey(listPosteriors$posteriorTransfGP, dayId)
-  setkey(dateTable, dayId)
-  listPosteriors$posteriorTransfGP[dateTable, ":="(date = i.date)]
+  setkey(objectInla$dateList$dateTable, dayId)
+  listPosteriors$posteriorTransfGP[objectInla$dateList$dateTable, ":="(date = i.date)]
   setkey(listPosteriors$posteriorTransfGP, date)
   setkey(countTable, date)
-  listPosteriors$posteriorTransfGP[countTable, ":="(positiveResults = i.positiveResults)]
+  listPosteriors$posteriorTransfGP[countTable, ":="(positiveResults = i.positiveResults, numberTest = i.numberTest)]
   
   # Output
   output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
-                      dateList = list(dateTable = dateTable, numDays = numDays, minDay = minDay, maxDay = maxDay))
-  output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives, matrixSampleHyper = matrixSampleHyper)
+                      dateList = objectInla$dateList, dataForModel = objectInla$dataForModel)
+  output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives, matrixSampleHyperAll = matrixSampleHyperAll)
   output_projection <- list(matrixSampleWeekday = matrixSampleWeekday, projectionGP = projectionGP)
   
   output <- output_main
@@ -251,7 +266,9 @@ getGrowthFromSamples <- function(matrixSampleDays){
 }
 
 # INTERNAL
-computePosteriors <- function(matrixSampleDays, sampleDerivatives, parametersModel, ifINLAMarginal = FALSE, m.spde = NULL){
+# TODO objectInla should not be arg? should be undo into dataForModel as arg only and objectInla optional?
+computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleHyper, matrixSampleEta, objectInla, parametersModel,
+                              ifINLAMarginal = FALSE){
   numDays <- nrow(matrixSampleDays)
   
   # ---------------------------------------------------- #
@@ -287,7 +304,7 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, parametersMod
   cat("Computing posterior of incidence... ")
   if(ifINLAMarginal){
     # (this version is slow and applies only to INLA)
-    samplesGP <- m.spde$marginals.random$day[nonBoundaryIndices]
+    samplesGP <- objectInla$marginals.random$day[objectInla$nonBoundaryIndices]
     if(parametersModel$params$linkType %in% c("NB")){
       transformedSamples <- lapply(samplesGP, function(x) inla.tmarginal(exp, x))
     }else if(parametersModel$params$linkType == "BB"){
@@ -311,6 +328,44 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, parametersMod
                                   q0.75 = apply(transformedSamples, 1, quantile, probs = 0.750, na.rm = T))
     
   }
+  
+  # ---------------------------------------------------- #
+  #                 POSTERIOR MODEL FIT                  #
+  # ---------------------------------------------------- #
+  # Compute the model posterior (as in R31.R)
+  sizeSample <- parametersRun$config$sizeSample
+  nameDispersionINLA <- ifelse(parametersModel$params$linkType == "NB",
+                               "size for the nbinomial observations (1/overdispersion)",
+                               "overdispersion for the betabinomial observations")
+  sampleOverdisp <- matrixSampleHyper[c(nameDispersionINLA),]
+  #predictionWeekday <- ?
+  #matrixSampleEta <- matrixSampleDays + matrixSampleWeekday[match(predictionWeekday, levelsWeek),]
+  if(parametersModel$params$linkType == "NB"){
+    samplesFit <- matrix(rnbinom(n = matrix(1, nrow = numDays, ncol = sizeSample),
+                                size = matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T),
+                                mu = exp(matrixSampleEta)),
+                        nrow = numDays, ncol = sizeSample, byrow = F)
+  }else{
+    testData <- objectInla$dataForModel[order(dayId), numberTest]
+    
+    matrixSampleOverdisp <- matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T)
+    samplesMu <- exp(matrixSampleEta)/(1 + exp(matrixSampleEta))
+    matrixAlpha <- samplesMu*(1 - matrixSampleOverdisp)/matrixSampleOverdisp
+    matrixBeta <- (1 - samplesMu)*(1 - matrixSampleOverdisp)/matrixSampleOverdisp
+    
+    matrixP <- matrix(rbeta(matrix(1, nrow = numDays, ncol = sizeSample), shape1 = matrixAlpha, shape2 = matrixBeta),
+                      nrow = numDays, ncol = sizeSample, byrow = F)
+    matrixTests <- matrix(testData, nrow = numDays, ncol = sizeSample, byrow = F)
+    samplesFit <- matrix(rbinom(n = matrix(1, nrow = numDays, ncol = sizeSample),
+                         size = matrixTests,
+                         prob = matrixP),
+                  nrow = numDays, ncol = sizeSample, byrow = F)/matrixTests
+  }
+  posteriorTransfGP[order(dayId), ":="(medianFT = apply(samplesFit, 1, quantile, 0.5),
+                                       q0.975FT = apply(samplesFit, 1, quantile, 0.975),
+                                       q0.025FT = apply(samplesFit, 1, quantile, 0.025),
+                                       q0.75FT = apply(samplesFit, 1, quantile, 0.75),
+                                       q0.25FT = apply(samplesFit, 1, quantile, 0.25))]
   
   return(list(posteriorGrowth = posteriorGrowth, posteriorTransfGP = posteriorTransfGP))
 }
@@ -359,6 +414,8 @@ getGrowthFromSamples_GP <- function(matrixSampleGP, samplesHyperparam, sigma0, r
 
 # Functions for running multiple groups ----
 
+# TODO update functions in this section
+
 #' Wrapper for runModelGrowthRate(), to run the model in multiple /groupsareas/partitions/locations if same settings/priors
 #' countTableAll: data table with one row per day per group and these columns:
 #' - labelPartition: name of group or 'partition'
@@ -390,7 +447,7 @@ runModelMultipleGroups <- function(countTableAll, partitionTable, parametersMode
       countTable <- countTableAll[labelPartition == labelPartition_ii & date >= minDateModel_ii & date <= maxDateModel_ii,
                                   .(date, positiveResults, numberTest)]
       output[[ii]] <- runModelGrowthRate(countTable = countTable,
-                                         parametersModel = parametersModel, saveSamples = saveSamples, derivativeFromGP = derivativeFromGP,
+                                         parametersModel = parametersModel, saveSamples = saveSamples,
                                          minDate = minDateModel_ii, maxDate = maxDateModel_ii)
       cat("\n")
     }, error = function(e) {cat("SKIPPED ERROR for labelPartition", labelPartition_ii, ":", conditionMessage(e), "\n")})
@@ -460,5 +517,52 @@ stackOutputMultipleGroups <- function(output, partitionTable){
   #return(list(posteriorGrowth = posteriorGrowth, posteriorTransfGP = posteriorTransfGP,
   #            matrixSampleDays = matrixSampleDays, sampleDerivatives = t(sampleDerivatives)))
   #}
+}
+
+# Figures ----
+#' Requires: library(ggnewscale), library(scales)
+#' outputModel$posteriorTransfGP, parametersModel$params$linkType
+plotFitting <- function(outputModel, parametersModel){
+  colourDots <- c("black", "black") # c("#D41B19", "black")
+  colourFit <- c("gray", "#F5CC14")
+  
+  dataToPlotPosterior <- outputModel$posteriorTransfGP
+  dataToPlotPosterior[, ratio := pmin(1, pmax(0, positiveResults/numberTest))]
+  dataToPlotPosterior[, isWeekend := weekdays(date) %in% c("Saturday", "Sunday")]
+  dataToPlotPosterior[, weekendLabel := factor(ifelse(isWeekend, "weekend", "weekday"), levels = c("weekend", "weekday"))]
+  dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median, q0.025, q0.975, type = "Gaussian process")])
+  dataToPlot[, typeLevel := factor(type, levels = c("model fit", "Gaussian process"))]
+  p01 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
+    geom_ribbon(data = dataToPlot[typeLevel != "points"], aes(ymin = q0.025, ymax = q0.975, fill = typeLevel), alpha = 0.5) +
+    geom_line(data = dataToPlot[typeLevel != "points"], aes(y = median, colour = typeLevel, linetype = typeLevel)) +
+    scale_colour_manual(name = "posterior (median, 95% CI)", values = colourFit) +
+    scale_fill_manual(name = "posterior (median, 95% CI)", values = colourFit) +
+    scale_linetype_manual(name = "posterior (median, 95% CI)", values = c(2, 1)) +
+    #scale_x_date(labels = scales::label_date(formatBreaks), breaks = dateBreaks2) +
+    scale_x_date(expand = c(0,0)) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.title.x = element_blank(),
+          legend.key = element_blank(), panel.grid.major.x = element_line(linetype = 2, colour = "gray90")) # 0.6
+  if(parametersModel$params$linkType == "BB"){
+    p02 <- p01 +
+      new_scale_color() +
+      scale_colour_manual(name = "proportion of positives", values = colourDots) +
+      scale_shape_discrete(name = "proportion of positives") +
+      geom_point(aes(y = ratio, colour = weekendLabel, shape = weekendLabel)) +
+      labs(x = "day", y = "model posterior\nand proportion of positives") +
+      guides(shape = guide_legend(order = 1), colour = guide_legend(order = 1))
+  }else{
+    p02 <- p01 +
+      new_scale_color() +
+      scale_colour_manual(name = "count of positives", values = colourDots) +
+      scale_shape_discrete(name = "count of positives") +
+      geom_point(aes(y = positiveResults, colour = weekendLabel, shape = weekendLabel)) +
+      scale_y_continuous(labels = unit_format(unit = "", scale = 1e-3)) + #unit = "K"
+      labs(x = "day", y = "model posterior\nand count of positives (thousands)") +
+      guides(shape = guide_legend(order = 1), colour = guide_legend(order = 1))
+  }
+  
+  return(p02)
 }
 
