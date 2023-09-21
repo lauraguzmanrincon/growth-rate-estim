@@ -693,7 +693,7 @@ plotHyperparametersDispersion <- function(outputModel, parametersModel, log = T)
     samplesPriorTransf <- exp(samplesPrior)
   }else{
     samplesPrior <- rnorm(n = 300,
-                          mean = parametersModel$params$NB.prior.rho$overdispersion$param[1],
+                          mean = parametersModel$params$BB.prior.rho$overdispersion$param[1],
                           sd = sqrt(1/parametersModel$params$BB.prior.rho$overdispersion$param[2]))
     samplesPriorTransf <- exp(samplesPrior)/(1 + exp(samplesPrior))
   }
