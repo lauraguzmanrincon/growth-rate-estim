@@ -443,16 +443,18 @@ getGrowthFromSamples_GP <- function(matrixSampleGP, samplesHyperparam, sigma0, r
     invDeltaMatrix <- chol2inv(chol(deltaMatrix)) # solve vs. chol2inv system.time(31700*system.time(solve(deltaMatrix))/60)
     fVector <- matrixSampleGP[, indexSample]
     
-    # Compute derivative matrices of f: D1, diag(D) in notes respectively
-    d1Matrix <- -sig2Value*kappaVal^2*auxRelativeDistanceMatrix*expMatrix
-    #dMatrix <- sig2Value*kappaVal^2*diag(expMatrix)*(1 - kappaVal*diag(distanceMatrix)) # here we only compute the diagonal
-    dMatrixAll <- sig2Value*kappaVal^2*expMatrix*(1 - kappaVal*distanceMatrix)
+    # Compute derivative matrices of f:
+    # (OLD) d1Matrix -> KXpX, dMatrixAll -> KXpXp
+    KXpX <- -sig2Value*kappaVal^2*auxRelativeDistanceMatrix*expMatrix # K(X*,X) - first partial derivative
+    KXpXp <- sig2Value*kappaVal^2*expMatrix*(1 - kappaVal*distanceMatrix) # K(X*,X*) - second partial derivative
+    #KXpXp <- sig2Value*kappaVal^2*diag(expMatrix)*(1 - kappaVal*diag(distanceMatrix)) # here we only compute the diagonal
     
-    meanMVN <- d1Matrix%*%invDeltaMatrix%*%fVector
+    # Draw samples
+    meanMVN <- KXpX%*%invDeltaMatrix%*%fVector
+    iSample <- MASS::mvrnorm(n = 1, mu = KXpX%*%invDeltaMatrix%*%fVector, Sigma = KXpXp - KXpX%*%invDeltaMatrix%*%t(KXpX))
+    #iSample <- sapply(1:numDays, function(x) rnorm(n = 1, mean = meanMVN[x], sd = sqrt( KXpXp[x] - KXpX[x,]%*%invDeltaMatrix%*%KXpX[x,] )))
     
-    #iSample <- sapply(1:numDays, function(x) rnorm(n = 1, mean = meanMVN[x], sd = sqrt( dMatrix[x] - d1Matrix[x,]%*%invDeltaMatrix%*%d1Matrix[x,] )))
-    iSample <- MASS::mvrnorm(n = 1, mu = d1Matrix%*%invDeltaMatrix%*%fVector, Sigma = dMatrixAll - d1Matrix%*%invDeltaMatrix%*%t(d1Matrix))
-    
+    # Store
     sampleDerivatives[indexSample,] <- iSample
   }
   return(t(sampleDerivatives))
