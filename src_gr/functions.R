@@ -777,12 +777,17 @@ plotFittingSamples <- function(outputModel, parametersModel){
   dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
                       dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
                       dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
+  if(parametersModel$params$linkType == "NB"){
+    dataToPlot[, points := positiveResults]
+  }else{
+    dataToPlot[, points := ratio]
+  }
   dataToPlot[, typeLevel := factor(type, levels = c("model fit", "Gaussian process"))]
   p0 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
     geom_line(data = dataSamplesGP, aes(y = valueTr, group = sample, colour = colourId), alpha = 0.5) + # colour = "gray50"
     #geom_ribbon(data = dataToPlot[typeLevel == "Gaussian process"], aes(ymin = q0.025, ymax = q0.975, fill = typeLevel), alpha = 0.1) +
     geom_line(data = dataToPlot[typeLevel == "Gaussian process"], aes(y = median), linetype = 2, colour = "#F5CC14") +
-    geom_point(aes(y = positiveResults), colour = "red", size = 0.5) +
+    geom_point(aes(y = points), colour = "red", size = 0.5) +
     scale_colour_gradient(guide = "none", low = "gray90", high = "gray10") +
     #scale_colour_manual(name = "posterior (median, 95% CI)", values = "#F5CC14") +
     #scale_fill_manual(name = "posterior (median, 95% CI)", values = "#F5CC14") +
