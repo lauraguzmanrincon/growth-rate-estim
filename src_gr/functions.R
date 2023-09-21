@@ -439,7 +439,7 @@ getGrowthFromSamples_GP <- function(matrixSampleGP, samplesHyperparam, sigma0, r
     kappaVal <- kappaVector[indexSample]
     
     expMatrix <- exp(-kappaVal*distanceMatrix)
-    deltaMatrix <- sig2Value*(1 + kappaVal*distanceMatrix)*expMatrix
+    deltaMatrix <- sig2Value*(1 + kappaVal*distanceMatrix)*expMatrix # K(X,X)
     invDeltaMatrix <- chol2inv(chol(deltaMatrix)) # solve vs. chol2inv system.time(31700*system.time(solve(deltaMatrix))/60)
     fVector <- matrixSampleGP[, indexSample]
     
