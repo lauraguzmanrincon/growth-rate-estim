@@ -873,7 +873,7 @@ plotLatent <- function(outputModel){
   return(p0)
 }
 
-plotRandomEffect <- function(outputModel){
+plotRandomEffect <- function(outputModel, parametersModel){
   dataToPlotPosterior <- outputModel$posteriorRandomEffect
   dataToPlot <- rbind(dataToPlotPosterior[, .(index, median = median, qlow = NA, qhigh = NA, type = "median")],
                       dataToPlotPosterior[, .(index, median = NA, qlow = q0.025, qhigh = q0.975, type = "95% CI")],
@@ -891,5 +891,9 @@ plotRandomEffect <- function(outputModel){
     labs(x = "day", y = "random effect") +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), #legend.position = c(0.62, 0.75),
           legend.key = element_blank())
+  if(parametersModel$params$randomEffect == "weekday"){
+    levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    p0 <- p0 + scale_x_continuous(breaks = 1:7, labels = levelsWeek)
+  }
   return(p0)
 }
