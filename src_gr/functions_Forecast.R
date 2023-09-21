@@ -47,7 +47,7 @@ getProjectionLinear <- function(parametersModel, outputModel, currentDate, sizeP
 #' Create projection matrices using GP, computed in INLA
 #' projectionGP: matrix sizePrediction x samples of samples of GP
 #' projectionGR: matrix sizePrediction x samples of samples of GR
-#' projectionGR_onBoundary: vector samples of GR in last days of observation (usually NA from model)
+#' projectionGR_onBoundary: vector samples of GR in last days of observation if using finite differences (since it is NA from model)
 getProjectionGP <- function(parametersModel, outputModel){
   daysForPrediction <- 14
   #firstPredictionPoint <- outputModel$dateList$maxDay
@@ -75,6 +75,135 @@ getProjectionGP <- function(parametersModel, outputModel){
               currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date], sizePrediction = sizePrediction))
 }
 
+#' 20.09.2023 - code adapted from getGrowthFromSamples_GP() ... Key: find d1Matrix and dMatrixAll
+#'  currentDayId: Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
+getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+  
+  if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
+  
+  # Get basis configuration
+  currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
+  sizeSample <- parametersModel$config$sizeSample
+  numDaysPast <- min(outputModel$dateList$numDays, daysForPrediction)
+  matrixSampleGP <- outputModel$matrixSampleDays[(currentDayId - daysForPrediction + 1):currentDayId,]
+  #BORRARmatrixDerivatives <- outputModel$sampleDerivatives
+  
+  # Compute distance matrix for ordered days
+  pastInterval <- 1:numDaysPast
+  predInterval <- (numDaysPast + 1):(numDaysPast + sizePrediction)
+  relativeDistanceMatrixObsObs <- matrix(data = pastInterval, nrow = numDaysPast, ncol = numDaysPast, byrow = F) -
+    matrix(data = pastInterval, nrow = numDaysPast, ncol = numDaysPast, byrow = T)
+  relativeDistanceMatrixPredObs <- matrix(data = predInterval, nrow = sizePrediction, ncol = numDaysPast, byrow = F) -
+    matrix(data = pastInterval, nrow = sizePrediction, ncol = numDaysPast, byrow = T)
+  relativeDistanceMatrixPredPred <- matrix(data = predInterval, nrow = sizePrediction, ncol = sizePrediction, byrow = F) -
+    matrix(data = predInterval, nrow = sizePrediction, ncol = sizePrediction, byrow = T)
+  
+  # Get basis parameters
+  vGP <- 2 - 1/2
+  sigma0 <- parametersModel$params$prior2.sigma0
+  range0 <- parametersModel$params$prior2.range0
+  
+  # Compute auxiliar vectors
+  sig2Vector <- (sigma0*exp(outputModel$matrixSampleHyperAll["theta1",]))^2
+  kappaVector <- sqrt(8*vGP)/(range0*exp(outputModel$matrixSampleHyperAll["theta2",]))
+  
+  # Loop per sample of (f1, ..., fn, log.tau, log.kappa)
+  sampleProjections <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
+  sampleDerivatives <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
+  errorIterations <- rep(0, sizeSample)
+  for(indexSample in 1:sizeSample){
+    sig2Value <- sig2Vector[indexSample]
+    kappaVal <- kappaVector[indexSample]
+    
+    expMatrix <- exp(-kappaVal*abs(relativeDistanceMatrixObsObs))
+    deltaMatrix <- sig2Value*(1 + kappaVal*abs(relativeDistanceMatrixObsObs))*expMatrix # K(X,X)
+    invDeltaMatrix <- chol2inv(chol(deltaMatrix)) # solve vs. chol2inv system.time(31700*system.time(solve(deltaMatrix))/60)
+    fVector <- matrixSampleGP[, indexSample]
+    
+    expMatrixPredObs <- exp(-kappaVal*abs(relativeDistanceMatrixPredObs))
+    expMatrixPredPred <- exp(-kappaVal*abs(relativeDistanceMatrixPredPred))
+    
+    # Compute matrices for Gaussian conditionals for GP prediction:
+    KPredObs <- rbind(sig2Value*(1 + kappaVal*abs(relativeDistanceMatrixPredObs))*expMatrixPredObs, # K
+                      -sig2Value*kappaVal^2*relativeDistanceMatrixPredObs*expMatrixPredObs) # K'
+    KPredPred <- rbind(cbind(sig2Value*(1 + kappaVal*abs(relativeDistanceMatrixPredPred))*expMatrixPredPred,# K
+                             -sig2Value*kappaVal^2*relativeDistanceMatrixPredPred*expMatrixPredPred),
+                       cbind(t(-sig2Value*kappaVal^2*relativeDistanceMatrixPredPred*expMatrixPredPred), # symmetric?
+                             sig2Value*kappaVal^2*expMatrixPredPred*(1 - kappaVal*abs(relativeDistanceMatrixPredPred))))
+    # TODO is this slow?
+    
+    # Draw samples
+    meanMVN <- KPredObs%*%invDeltaMatrix%*%fVector
+    sigmaMVN <- KPredPred - KPredObs%*%invDeltaMatrix%*%t(KPredObs)
+    tryCatch({
+      #iSample <- MASS::mvrnorm(n = 1, mu = meanMVN, Sigma = sigmaMVN + 0.1*diag(2*sizePrediction))
+      iSampleGP <- MASS::mvrnorm(n = 1, mu = meanMVN[1:10], Sigma = sigmaMVN[1:10,1:10])
+      iSampleGR <- MASS::mvrnorm(n = 1, mu = meanMVN[11:20], Sigma = sigmaMVN[11:20,11:20])
+    }, error = function(e) {
+      errorIterations[indexSample] <- 1
+      iSample <- rep(NA, 2*sizePrediction)
+    })
+    
+    # Save
+    #sampleProjections[,indexSample] <- iSample[1:sizePrediction]
+    #sampleDerivatives[,indexSample] <- iSample[(sizePrediction + 1):(sizePrediction)]
+    sampleProjections[,indexSample] <- iSampleGP
+    sampleDerivatives[,indexSample] <- iSampleGR
+  }
+  
+  if(sum(errorIterations) > 0) warning("Sigma not positive definite for ", sum(errorIterations), " samples out of ", sizeSample)
+  
+  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
+  if(parametersModel$config$derivativeFromGP == F)
+    projectionGR_onBoundary <- rep(0, sizeSample) # TODO #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
+  else
+    projectionGR_onBoundary <- NA
+  
+  return(list(projectionGP = sampleProjections, projectionGR = sampleDerivatives,
+              projectionGR_onBoundary = projectionGR_onBoundary,
+              currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date],
+              sizePrediction = sizePrediction))
+}
+
+getGrowthFromSamples_GPBORRAR <- function(matrixSampleGP, samplesHyperparam, sigma0, range0){
+  numDays <- nrow(matrixSampleGP)
+  sizeSample <- ncol(matrixSampleGP)
+  
+  # Compute distance matrix for ordered days
+  distanceMatrix <- sapply(1:numDays, function(nd) abs(nd - (1:numDays)))
+  auxRelativeDistanceMatrix <- matrix(data = 1:numDays, nrow = numDays, ncol = numDays, byrow = F) -
+    matrix(data = 1:numDays, nrow = numDays, ncol = numDays, byrow = T)
+  
+  # Compute auxiliar vectors, with vGP = 3/2
+  sig2Vector <- (sigma0*exp(samplesHyperparam["theta1",]))^2
+  kappaVector <- sqrt(12)/(range0*exp(samplesHyperparam["theta2",]))
+  
+  # Loop per sample of (f1, ..., fn, log.tau, log.kappa)
+  sampleDerivatives <- matrix(0, nrow = sizeSample, ncol = numDays)
+  for(indexSample in 1:sizeSample){
+    sig2Value <- sig2Vector[indexSample]
+    kappaVal <- kappaVector[indexSample]
+    
+    expMatrix <- exp(-kappaVal*distanceMatrix)
+    deltaMatrix <- sig2Value*(1 + kappaVal*distanceMatrix)*expMatrix
+    invDeltaMatrix <- chol2inv(chol(deltaMatrix)) # solve vs. chol2inv system.time(31700*system.time(solve(deltaMatrix))/60)
+    fVector <- matrixSampleGP[, indexSample]
+    
+    # Compute derivative matrices of f: D1, diag(D) in notes respectively
+    d1Matrix <- -sig2Value*kappaVal^2*auxRelativeDistanceMatrix*expMatrix
+    #dMatrix <- sig2Value*kappaVal^2*diag(expMatrix)*(1 - kappaVal*diag(distanceMatrix)) # here we only compute the diagonal
+    dMatrixAll <- sig2Value*kappaVal^2*expMatrix*(1 - kappaVal*distanceMatrix)
+    
+    meanMVN <- d1Matrix%*%invDeltaMatrix%*%fVector
+    
+    #iSample <- sapply(1:numDays, function(x) rnorm(n = 1, mean = meanMVN[x], sd = sqrt( dMatrix[x] - d1Matrix[x,]%*%invDeltaMatrix%*%d1Matrix[x,] )))
+    iSample <- MASS::mvrnorm(n = 1, mu = d1Matrix%*%invDeltaMatrix%*%fVector, Sigma = dMatrixAll - d1Matrix%*%invDeltaMatrix%*%t(d1Matrix))
+    
+    sampleDerivatives[indexSample,] <- iSample
+  }
+  return(t(sampleDerivatives))
+}
+
 #' Function for projections that provide a GP and a GR !!!
 #' Creates a table with samples for relevant parameters plus median, 95% CI for model posterior
 #' testingVector: vector of length projectionSamplesGP$sizePrediction with testing (for proportions model)
@@ -86,14 +215,11 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
   # Auxiliar variables
   sizePrediction <- nrow(projectionSamplesGP$projectionGP)
   levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-  nameDispersionINLA <- ifelse(parametersModel$params$linkType == "NB",
-                               "size for the nbinomial observations (1/overdispersion)",
-                               "overdispersion for the betabinomial observations")
   currentDayId <- outputModel$dateList$dateTable[date == projectionSamplesGP$currentDate, dayId]
   
   # Create matrices of parameters
   # TODO same as in computePosteriors()... Unify!
-  matrixSampleOverdisp <- outputModel$matrixSampleHyper[c(nameDispersionINLA),]
+  matrixSampleOverdisp <- outputModel$matrixSampleHyper[c("overdispersion"),]
   predictionWeekday <- outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, weekdays(date + 1:sizePrediction)]
   etaSample <- projectionSamplesGP$projectionGP + outputModel$matrixSampleWeekday[match(predictionWeekday, levelsWeek),]
   rhoSample <- matrix(matrixSampleOverdisp, nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = T)
@@ -191,19 +317,21 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
     tableProjections_boundary[, date := dateLastDay + dayId - lastDayId]
     
     setkey(tableProjections_boundary, dayId)
-    setkey(outputModell$posteriorTransfGP, dayId)
-    tableProjections_boundary[outputModell$posteriorTransfGP, ":="(numberTest = i.numberTest,
-                                                     gp_q025 = i.q0.025, gp_q25 = i.q0.25, gp_median = i.median, gp_q75 = i.q0.75, gp_q975 = i.q0.975,
-                                                     gpTrans_q025 = i.q0.025FT, gpTrans_q25 = i.q0.25FT, gpTrans_median = i.medianFT,
-                                                     gpTrans_q75 = i.q0.75FT, gpTrans_q975 = i.q0.975FT)]
+    setkey(outputModel$posteriorTransfGP, dayId)
+    tableProjections_boundary[outputModel$posteriorTransfGP, ":="(numberTest = i.numberTest,
+                                                     gp_q025 = i.q0.025_GP, gp_q25 = i.q0.25_GP, gp_median = i.median_GP, gp_q75 = i.q0.75_GP, gp_q975 = i.q0.975_GP,
+                                                     #gpTrans_q025 = i.q0.025FT, gpTrans_q25 = i.q0.25FT, gpTrans_median = i.medianFT,
+                                                     #gpTrans_q75 = i.q0.75FT, gpTrans_q975 = i.q0.975FT) # removed 19.09.2023
+                                                     gpTrans_q025 = i.q0.025_transGP, gpTrans_q25 = i.q0.25_transGP, gpTrans_median = i.median_transGP,
+                                                     gpTrans_q75 = i.q0.75_transGP, gpTrans_q975 = i.q0.975_transGP)]
   }else{
-    tableProjections_boundary <- NA
+    tableSamples_boundary <- NA
     tableProjections_boundary <- NA
   }
     
   return(list(tableProjections = tableProjections, tableSamples = tableSamples,
               tableProjections_boundary = tableProjections_boundary, tableSamples_boundary = tableSamples_boundary,
-              currentDate = currentDate, sizePrediction = sizePrediction, nameProjection = nameProjection))
+              currentDate = projectionSamplesGP$currentDate, sizePrediction = sizePrediction, nameProjection = nameProjection))
 }
 
 

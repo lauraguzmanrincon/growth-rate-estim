@@ -29,6 +29,9 @@ setParametersFn <- function(linkType,
                             derivativeFromGP = F,
                             computeGPProjection = F,
                             sizeGPProjection = 10){
+  # Checks
+  if(!randomEffect %in% c("weekday", "all", "none")) stop("Parameters randomEffect can only take a values from 'weekday', 'all', 'none'.")
+  
   parameters <- list(
     params = list(
       linkType = linkType,
