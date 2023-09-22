@@ -22,6 +22,7 @@ setParametersFn <- function(linkType,
                             theta.prior2.prec = diag(2),
                             BB.prior.rho = list(overdispersion = list(prior = "gaussian", param = c(0, 0.5))),
                             NB.prior.rho = list(size = list(prior = "gaussian", param = c(0, 0.01))),
+                            hasConstant = F, # 21.09.2023
                             unitTime = "day", # day week integer
                             randomEffect = "weekday", # weekday all none # if day, adds day effect automatically # old dayWeek
                             dayWeek.prior.prec = list(theta = list(prior = 'loggamma', param = c(1, 0.01))), # TODO fix name
@@ -43,6 +44,7 @@ setParametersFn <- function(linkType,
       NB.prior.rho = NB.prior.rho,
       unitTime = unitTime,
       randomEffect = randomEffect,
+      hasConstant = hasConstant,
       dayWeek.prior.prec = dayWeek.prior.prec
     ),
     config = list(
@@ -134,7 +136,8 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
                              B.tau = cbind(log(tau0), basis.prior2.tau[1], basis.prior2.tau[2]),
                              B.kappa = cbind(log(kappa0), basis.prior2.kappa[1], basis.prior2.kappa[2]),
                              theta.prior.mean = parametersModel$params$theta.prior2.mean,
-                             theta.prior.prec = parametersModel$params$theta.prior2.prec)
+                             theta.prior.prec = parametersModel$params$theta.prior2.prec,
+                             constr = parametersModel$params$hasConstant) # NEW 21.09.2023
   
   # - Create stack data
   spde1.idx <- inla.spde.make.index("day", n.spde = spde1$n.spde)
@@ -158,13 +161,17 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
   
   # Fit model (using INLA)
   cat("Fitting model ... ")
+  constantTerm <- 2*parametersModel$params$hasConstant - 1
   if(parametersModel$params$randomEffect == "weekday"){
-    formula <- positiveResults ~ -1 + f(day, model = spde1) + f(dayWeek, model = 'iid', hyper = priorDayWeek, constr = T)
+    formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1) + f(dayWeek, model = 'iid', hyper = priorDayWeek, constr = T)")
   }else if(parametersModel$params$randomEffect == "all"){
-    formula <- positiveResults ~ -1 + f(day, model = spde1) + f(dayId2, model = 'iid', hyper = priorDayWeek, constr = T)
+    formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1) + f(dayId2, model = 'iid', hyper = priorDayWeek, constr = T)")
   }else{
-    formula <- positiveResults ~ -1 + f(day, model = spde1)
+    #formula <- positiveResults ~ constantTerm + f(day, model = spde1)
+    formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1)")
   }
+  formula <- as.formula(formulaText)
+  
   if(parametersModel$params$linkType == "BB"){
     # Betabinomial
     objectInla <- inla(formula = formula, data = inla.stack.data(joint.stack),
@@ -198,7 +205,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   # Get samples of posterior distribution of parameters
   sampleList <- inla.posterior.sample(parametersModel$config$sizeSample, objectInla)
   
-  # Extract relevant indexes from output
+  # Extract relevant indexes from output (see unique(sapply(strsplit(rownms, ":"), function(x) x[[1]])))
   rownms <- rownames(sampleList[[1]]$latent)
   set1 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "APredictor"))
   #set2 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "Predictor"))
@@ -206,12 +213,17 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   set4 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == case_when(parametersModel$params$randomEffect == "weekday" ~ "dayWeek",
                                                                                     parametersModel$params$randomEffect == "all" ~ "dayId2",
                                                                                     parametersModel$params$randomEffect == "none" ~ "NA")))
+  if(parametersModel$params$hasConstant) set5 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "(Intercept)"))
   dayIndexInSample <- set3[objectInla$nonBoundaryIndices]
   
   # Create matrix of samples (and hyperparameters/weekday effect if needed)
   matrixSampleDays <- sapply(sampleList, function(x) x$latent[dayIndexInSample,1])
   matrixSampleWeekday <- sapply(sampleList, function(x) x$latent[set4,1])
   matrixSampleEta <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
+  if(parametersModel$params$hasConstant)
+    matrixSampleIntercept <- 3*sapply(sampleList, function(x) x$latent[set5,1]) # TODO
+  else
+    matrixSampleIntercept <- rep(0, parametersModel$config$sizeSample)
   
   nameDispersionINLA <- ifelse(parametersModel$params$linkType == "NB",
                                "size for the nbinomial observations (1/overdispersion)",
@@ -247,7 +259,8 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
-  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll, matrixSampleEta, matrixSampleWeekday, objectInla, parametersModel)
+  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll,
+                                      matrixSampleEta, matrixSampleWeekday, matrixSampleIntercept, objectInla, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
   setkey(objectInla$dateList$dateTable, dayId)
@@ -264,8 +277,9 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
                       posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
                       dateList = objectInla$dateList, dataForModel = objectInla$dataForModel)
-  output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives, matrixSampleHyperAll = matrixSampleHyperAll)
-  output_projection <- list(matrixSampleWeekday = matrixSampleWeekday, projectionGP = projectionGP)
+  output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives,
+                         matrixSampleWeekday = matrixSampleWeekday, matrixSampleHyperAll = matrixSampleHyperAll, matrixSampleIntercept = matrixSampleIntercept)
+  output_projection <- list(projectionGP = projectionGP)
   
   output <- output_main
   if(saveSamples == T) output <- c(output, output_samples)
@@ -291,7 +305,9 @@ getGrowthFromSamples <- function(matrixSampleDays){
 
 # INTERNAL
 # TODO objectInla should not be arg? should be undo into dataForModel as arg only and objectInla optional?
-computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleHyper, matrixSampleEta, matrixSampleWeekday, objectInla, parametersModel,
+computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleHyper,
+                              matrixSampleEta, matrixSampleWeekday, matrixSampleIntercept,
+                              objectInla, parametersModel,
                               ifINLAMarginal = FALSE){
   numDays <- nrow(matrixSampleDays)
   
@@ -300,13 +316,14 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # ---------------------------------------------------- #
   # Compute log (or inv. logit) of posterior of Gaussian process derivative in transformed space
   cat("Computing posterior of growth rate ... ")
-  if(parametersModel$params$linkType == "BB"){
-    tempExpGP <- exp(matrixSampleDays)
-    tempLogit <- tempExpGP/(1 + tempExpGP)
-    tempList <- sampleDerivatives/(1 + tempLogit)
-  }else if(parametersModel$params$linkType == "NB"){
-    tempList <- sampleDerivatives
-  }
+  #if(parametersModel$params$linkType == "BB"){
+  #  tempExpGP <- exp(matrixSampleDays)
+  #  tempLogit <- tempExpGP/(1 + tempExpGP)
+  #  tempList <- sampleDerivatives/(1 + tempLogit)
+  #}else if(parametersModel$params$linkType == "NB"){
+  #  tempList <- sampleDerivatives
+  #}
+  tempList <- getSamplesGR(matrixSampleDays, sampleDerivatives, parametersModel)
   tempDoubling <- abs(log(2)/tempList)
   posteriorGrowth <- data.table(dayId = 1:numDays,
                                 mean = rowMeans(tempList),
@@ -340,8 +357,7 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
     setnames(posteriorTransfGP,
              c("V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10"),
              c("median_transGP", "q0.025_transGP", "q0.975_transGP", "q0.25_transGP", "q0.75_transGP",
-               "median_GP", "q0.025_GP", "q0.975_GP", "q0.25_GP", "q0.75_GP"))
-    # TODO median_GP
+               "median_GP", "q0.025_GP", "q0.975_GP", "q0.25_GP", "q0.75_GP")) # NEW 19.09.2023
   }else{
     # NEW 09.01.2023
     if(parametersModel$params$linkType %in% c("NB")){
@@ -361,6 +377,20 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
                                   q0.25_GP = apply(matrixSampleDays, 1, quantile, probs = 0.250, na.rm = T),
                                   q0.75_GP = apply(matrixSampleDays, 1, quantile, probs = 0.750, na.rm = T))
     
+    if(parametersModel$params$hasConstant){
+      # NEW 09.01.2023
+      repSampleIntercept <- matrix(c(matrixSampleIntercept), nrow = numDays, ncol = ncol(matrixSampleDays), byrow = T)
+      if(parametersModel$params$linkType %in% c("NB")){
+        transformedSamplesWithCons <- exp(matrixSampleDays + repSampleIntercept)
+      }else if(parametersModel$params$linkType == "BB"){
+        transformedSamplesWithCons <- exp(matrixSampleDays + repSampleIntercept)/(1 + exp(matrixSampleDays + repSampleIntercept))
+      }
+      posteriorTransfGP[order(dayId), ":="(median_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.5, na.rm = T),
+                               q0.025_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.025, na.rm = T),
+                               q0.975_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.975, na.rm = T),
+                               q0.25_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.250, na.rm = T),
+                               q0.75_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.750, na.rm = T))]
+    }
   }
   
   # ---------------------------------------------------- #
@@ -402,6 +432,7 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   #                 POSTERIOR DAY EFFECT                 #
   # ---------------------------------------------------- #
   if(parametersModel$params$randomEffect != "none"){
+    # NEW 19.09.2023
     posteriorRandomEffect <- data.table(index = 1:nrow(matrixSampleWeekday),
                                         median = apply(matrixSampleWeekday, 1, quantile, probs = 0.5, na.rm = T),
                                         q0.025 = apply(matrixSampleWeekday, 1, quantile, probs = 0.025, na.rm = T),
@@ -412,7 +443,21 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
     posteriorRandomEffect <- NULL
   }
   
-  return(list(posteriorGrowth = posteriorGrowth, posteriorTransfGP = posteriorTransfGP, posteriorRandomEffect = posteriorRandomEffect))
+  # ---------------------------------------------------- #
+  #                 POSTERIOR INTERCEPT                  #
+  # ---------------------------------------------------- #
+  if(parametersModel$params$hasConstant){
+    posteriorIntercept <- data.table(median = quantile(matrixSampleIntercept, probs = 0.5, na.rm = T),
+                                     q0.025 = quantile(matrixSampleIntercept, probs = 0.025, na.rm = T),
+                                     q0.975 = quantile(matrixSampleIntercept, probs = 0.975, na.rm = T),
+                                     q0.25 = quantile(matrixSampleIntercept, probs = 0.250, na.rm = T),
+                                     q0.75 = quantile(matrixSampleIntercept, probs = 0.750, na.rm = T))
+  }else{
+    posteriorIntercept <- NULL
+  }
+  
+  return(list(posteriorGrowth = posteriorGrowth, posteriorTransfGP = posteriorTransfGP,
+              posteriorRandomEffect = posteriorRandomEffect, posteriorIntercept = posteriorIntercept))
 }
 
 #' matrixSampleDays: days x samples
@@ -458,6 +503,21 @@ getGrowthFromSamples_GP <- function(matrixSampleGP, samplesHyperparam, sigma0, r
     sampleDerivatives[indexSample,] <- iSample
   }
   return(t(sampleDerivatives))
+}
+
+#' 22 sep 2023 (for use in plotFittingSamplesGR and in general)
+#' Gives a matrix of dayId x samples of samples of the growth rate
+getSamplesGR <- function(matrixSampleDays, sampleDerivatives, parametersModel){
+  # Transform samples from GP derivative to GR
+  if(parametersModel$params$linkType == "BB"){
+    tempExpGP <- exp(matrixSampleDays)
+    tempLogit <- tempExpGP/(1 + tempExpGP)
+    samplesGR <- sampleDerivatives/(1 + tempLogit)
+  }else if(parametersModel$params$linkType == "NB"){
+    samplesGR <- sampleDerivatives
+  }
+  rownames(samplesGR) <- NULL
+  return(samplesGR)
 }
 
 # Functions for running multiple groups ----
@@ -526,6 +586,8 @@ stackOutputMultipleGroups <- function(output, partitionTable){
                                           q0.25_transGP = i.q0.25_transGP, q0.75_transGP = i.q0.75_transGP,
                                           median_GP = i.median_GP, q0.025_GP = i.q0.025_GP, q0.975_GP = i.q0.975_GP,
                                           q0.25_GP = i.q0.25_GP, q0.75_GP = i.q0.75_GP,
+                                          median_transConsGP = i.median_transConsGP, q0.025_transConsGP = i.q0.025_transConsGP, q0.975_transConsGP = i.q0.975_transConsGP,
+                                          q0.25_transConsGP = i.q0.25_transConsGP, q0.75_transConsGP = i.q0.75_transConsGP,
                                           positiveResults = i.positiveResults)]
   
   setkey(posteriorGrowth, idPartition)
@@ -572,6 +634,31 @@ stackOutputMultipleGroups <- function(output, partitionTable){
   #}
 }
 
+# Auxiliar post-run ----
+#' Function that updates outputs from before 19 Sep 2023 to the 19.09.2023 version
+#' To obtain the 19.09.2023 version use [ git checkout 'master@{2023-09-19}'" ]
+updateOutputVersion18Sep2023 <- function(outputModel, parametersModel){
+  parametersModel$params$randomEffect <- ifelse(parametersModel$params$dayWeek == "day", "weekday", "all")
+  
+  rownames(outputModel$matrixSampleHyperAll) <- c("overdispersion", "theta1", "theta2", "precision")
+  outputModel$posteriorTransfGP[, ":="(median_transGP = median, q0.025_transGP = q0.025, q0.975_transGP = q0.975,
+                                       q0.25_transGP = q0.25, q0.75_transGP = q0.75)]
+  outputModel$posteriorTransfGP[order(dayId), ":="(median_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.5, na.rm = T),
+                                                   q0.025_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.025, na.rm = T),
+                                                   q0.975_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.975, na.rm = T),
+                                                   q0.25_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.250, na.rm = T),
+                                                   q0.75_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.750, na.rm = T))]
+  
+  outputModel$posteriorRandomEffect <- data.table(index = 1:nrow(outputModel$matrixSampleWeekday),
+                                                  median = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.5, na.rm = T),
+                                                  q0.025 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.025, na.rm = T),
+                                                  q0.975 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.975, na.rm = T),
+                                                  q0.25 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.250, na.rm = T),
+                                                  q0.75 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.750, na.rm = T))
+  
+  return(list(outputModel = outputModel, parametersModel = parametersModel))
+}
+
 # Figures ----
 # TODO test they are alright, they are ok
 # TODO sort out axis bit, sort out week/weekend dots for non daily functions
@@ -592,9 +679,17 @@ plotFitting <- function(outputModel, parametersModel){
   dataToPlotPosterior[, ratio := pmin(1, pmax(0, positiveResults/numberTest))]
   dataToPlotPosterior[, isWeekend := weekdays(date) %in% c("Saturday", "Sunday")]
   dataToPlotPosterior[, weekendLabel := factor(ifelse(isWeekend, "weekend", "weekday"), levels = c("weekend", "weekday"))]
-  dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
-                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
-                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
+  if(!parametersModel$params$hasConstant){
+    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
+                                                median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
+  }else{
+    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
+                                                median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
+  }
   dataToPlot[, typeLevel := factor(type, levels = c("model fit", "Gaussian process"))]
   p01 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
     geom_ribbon(data = dataToPlot[typeLevel != "points"], aes(ymin = q0.025, ymax = q0.975, fill = typeLevel), alpha = 0.5) +
@@ -754,7 +849,9 @@ printHyperparametersSummary <- function(outputModel, parametersModel){
 plotFittingSamples <- function(outputModel, parametersModel){
   # TODO !!!!! check
   # TODO do dots for BB
-  samples <- outputModel$matrixSampleDays
+  #samples <- outputModel$matrixSampleDays
+  samples <- outputModel$matrixSampleDays + # TODO ok? # 22.09.2023
+    matrix(outputModel$matrixSampleIntercept, nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample, byrow = T)
   rownames(samples) <- NULL
   dataSamplesGP <- data.table(suppressWarnings(melt(samples, varnames = c("dayId", "sample"))))
   
@@ -774,9 +871,17 @@ plotFittingSamples <- function(outputModel, parametersModel){
   dataToPlotPosterior[, ratio := pmin(1, pmax(0, positiveResults/numberTest))]
   dataToPlotPosterior[, isWeekend := weekdays(date) %in% c("Saturday", "Sunday")]
   dataToPlotPosterior[, weekendLabel := factor(ifelse(isWeekend, "weekend", "weekday"), levels = c("weekend", "weekday"))]
-  dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
-                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
-                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
+  if(!parametersModel$params$hasConstant){
+    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
+                                                median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
+  }else{
+    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
+                                                median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
+  }
   if(parametersModel$params$linkType == "NB"){
     dataToPlot[, points := positiveResults]
   }else{
@@ -803,16 +908,17 @@ plotFittingSamples <- function(outputModel, parametersModel){
 plotFittingSamplesGR <- function(outputModel, parametersModel){
   # TODO !!!!! check
   # TODO do dots for BB
-  samples <- outputModel$sampleDerivatives
-  rownames(samples) <- NULL
-  dataSamplesGR <- data.table(suppressWarnings(melt(samples, varnames = c("dayId", "sample"))))
   
+  # Transform samples from GP derivative to GR
+  samplesGR <- getSamplesGR(outputModel$matrixSampleDays, outputModel$sampleDerivatives, parametersModel)
+  
+  # Create data table samples
+  dataSamplesGR <- data.table(suppressWarnings(melt(samplesGR, varnames = c("dayId", "sample"))))
   setkey(dataSamplesGR, dayId)
   setkey(outputModel$dataForModel, dayId)
   dataSamplesGR[outputModel$dataForModel, date := i.date]
   
-  
-  
+  # Create plot
   dataToPlotPosterior <- outputModel$posteriorGrowth
   dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, median = median, qlow = NA, qhigh = NA, type = "median")],
                       dataToPlotPosterior[, .(dayId, date, median = NA, qlow = q0.025, qhigh = q0.975, type = "95% CI")],
@@ -835,28 +941,7 @@ plotFittingSamplesGR <- function(outputModel, parametersModel){
   return(p0)
 }
 
-#' outputModel$
-plotLatent <- function(outputModel){
-  dataToPlotPosterior <- outputModel$posteriorTransfGP
-  dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, median = median_GP, qlow = NA, qhigh = NA, type = "median")],
-                      dataToPlotPosterior[, .(dayId, date, median = NA, qlow = q0.025_GP, qhigh = q0.975_GP, type = "95% CI")],
-                      dataToPlotPosterior[, .(dayId, date, median = NA, qlow = q0.25_GP, qhigh = q0.75_GP, type = "50% CI")])
-  dataToPlot[, typeLevel := factor(type, levels = c("median", "50% CI", "95% CI"))]
-  p0 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
-    geom_ribbon(aes(ymin = qlow, ymax = qhigh, fill = typeLevel), alpha = 0.5) +
-    geom_line(aes(y = median, colour = typeLevel)) +
-    geom_hline(yintercept = 0, linetype = 2, colour = "gray70") +
-    scale_colour_manual(name = "posterior", values = c("black", "gray40", "gray70")) +
-    scale_fill_manual(name = "posterior", values = c("black", "gray40", "gray70"),
-                      guide = guide_legend(override.aes = list(colour = c("black", NA, NA), fill = c(NA, "gray40", "gray70")))) + # trick for legend
-    #scale_x_date(labels = scales::label_date(c("%d %b\n(%Y)", rep("%d %b", length(dateBreaks) - 1))), breaks = dateBreaks) +
-    #scale_y_continuous(labels = scales::percent_format(accuracy = NULL)) +
-    labs(x = "day", y = "GP in latent space") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), #legend.position = c(0.62, 0.75),
-          legend.key = element_blank())
-  return(p0)
-}
-
+#' .
 plotLatent <- function(outputModel){
   dataToPlotPosterior <- outputModel$posteriorTransfGP
   dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, median = median_GP, qlow = NA, qhigh = NA, type = "median")],
