@@ -7,42 +7,43 @@
 # testingVector: tests in the future days to project
 
 #' currentDayId: Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
-getProjectionLinear <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
-  currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
-  
-  # Prediction - linear
-  lastDay <- currentDayId - 1
-  xVal <- (currentDayId - daysForPrediction):(currentDayId - 1)
-  xxVal <- currentDayId + (0:sizePrediction) # + (0:(sizePrediction - 1)) # *** !!!!!!!!! ????
-  yMat <- outputModel$matrixSampleDays[xVal,]
-  dMat <- outputModel$sampleDerivatives[xVal,]
-  xxValDF <- data.frame(xVal = xxVal)
-  length(intersect(xVal, xxVal)) == 0
-  
-  # Create matrix with projection
-  tempProjectionGPLinear <- matrix(0, sizePrediction + 1, sizeSample) # ***
-  tempProjectionGRLinear <- matrix(0, sizePrediction + 1, sizeSample) # ***
-  for(jjj in 1:sizeSample){
-    fitProj <- lm(dMat[,jjj] ~ poly(xVal, degree = 1, raw = TRUE))
-    tempProjectionGPLinear[,jjj] <- 0.5*fitProj$coefficient[2]*(xxVal^2 - lastDay^2) + fitProj$coefficient[1]*(xxVal - lastDay) +
-      outputModel$matrixSampleDays[lastDay, jjj] # see notes 19.05.2021
-    tempProjectionGRLinear[,jjj] <- predict(fitProj, newdata = xxValDF)
-    # e.g.  plot(c(dMat[,jjj], tempProjectionGRLinear[,jjj]))
-    #       plot(c(yMat[,jjj], tempProjectionGPLinear[,jjj])) # ***
-    # TODO check: if x is too large there might be a numerical error? If so, move the points to 0 before fitting
-  }
-  projectionGPLinear <- tempProjectionGPLinear[2:(sizePrediction + 1),]
-  projectionGRLinear <- tempProjectionGRLinear[2:(sizePrediction + 1),]
-  
-  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F)
-    projectionGR_onBoundary <- c(tempProjectionGRLinear[1,])
-  else
-    projectionGR_onBoundary <- NA
-  
-  return(list(projectionGP = projectionGPLinear, projectionGR = projectionGRLinear, projectionGR_onBoundary = projectionGR_onBoundary,
-              currentDate = currentDate, sizePrediction = sizePrediction))
-}
+#' DEPRICATED 22.09.2023
+#getProjectionLinear <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+#  currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
+#  
+#  # Prediction - linear
+#  lastDay <- currentDayId - 1
+#  xVal <- (currentDayId - daysForPrediction):(currentDayId - 1)
+#  xxVal <- currentDayId + (0:sizePrediction) # + (0:(sizePrediction - 1)) # *** !!!!!!!!! ????
+#  yMat <- outputModel$matrixSampleDays[xVal,]
+#  dMat <- outputModel$sampleDerivatives[xVal,]
+#  xxValDF <- data.frame(xVal = xxVal)
+#  length(intersect(xVal, xxVal)) == 0
+#  
+#  # Create matrix with projection
+#  tempProjectionGPLinear <- matrix(0, sizePrediction + 1, sizeSample) # ***
+#  tempProjectionGRLinear <- matrix(0, sizePrediction + 1, sizeSample) # ***
+#  for(jjj in 1:sizeSample){
+#    fitProj <- lm(dMat[,jjj] ~ poly(xVal, degree = 1, raw = TRUE))
+#    tempProjectionGPLinear[,jjj] <- 0.5*fitProj$coefficient[2]*(xxVal^2 - lastDay^2) + fitProj$coefficient[1]*(xxVal - lastDay) +
+#      outputModel$matrixSampleDays[lastDay, jjj] # see notes 19.05.2021
+#    tempProjectionGRLinear[,jjj] <- predict(fitProj, newdata = xxValDF)
+#    # e.g.  plot(c(dMat[,jjj], tempProjectionGRLinear[,jjj]))
+#    #       plot(c(yMat[,jjj], tempProjectionGPLinear[,jjj])) # ***
+#    # TODO check: if x is too large there might be a numerical error? If so, move the points to 0 before fitting
+#  }
+#  projectionGPLinear <- tempProjectionGPLinear[2:(sizePrediction + 1),]
+#  projectionGRLinear <- tempProjectionGRLinear[2:(sizePrediction + 1),]
+#  
+#  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
+#  if(parametersModel$config$derivativeFromGP == F)
+#    projectionGR_onBoundary <- c(tempProjectionGRLinear[1,])
+#  else
+#    projectionGR_onBoundary <- NA
+#  
+#  return(list(projectionGP = projectionGPLinear, projectionGR = projectionGRLinear, projectionGR_onBoundary = projectionGR_onBoundary,
+#              currentDate = currentDate, sizePrediction = sizePrediction))
+#}
 
 #' Create projection matrices using GP, computed in INLA
 #' projectionGP: matrix sizePrediction x samples of samples of GP
