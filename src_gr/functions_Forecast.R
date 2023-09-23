@@ -49,32 +49,33 @@
 #' projectionGP: matrix sizePrediction x samples of samples of GP
 #' projectionGR: matrix sizePrediction x samples of samples of GR
 #' projectionGR_onBoundary: vector samples of GR in last days of observation if using finite differences (since it is NA from model)
-getProjectionGP <- function(parametersModel, outputModel){
-  daysForPrediction <- 14
-  #firstPredictionPoint <- outputModel$dateList$maxDay
-  sizePrediction <- parametersModel$config$sizeGPProjection # >7
-  
-  numDays <- outputModel$dateList$numDays
-  matrixSampleDays <- outputModel$matrixSampleDays
-  matrixDerivatives <- outputModel$sampleDerivatives
-  
-  # Prediction - GP
-  projectionGPInla <- outputModel$projectionGP
-  
-  matrixSampleAndPred <- rbind(matrixSampleDays[(numDays - daysForPrediction + 1):numDays,], projectionGPInla)
-  tempDerivative <- getGrowthFromSamples(matrixSampleAndPred)
-  projectionGRInla <- tempDerivative[daysForPrediction + (1:sizePrediction),]
-  
-  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F)
-    projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
-  else
-    projectionGR_onBoundary <- NA
-  
-  return(list(projectionGP = projectionGPInla[1:sizePrediction,], projectionGR = projectionGRInla[1:sizePrediction,],
-              projectionGR_onBoundary = projectionGR_onBoundary,
-              currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date], sizePrediction = sizePrediction))
-}
+#' DEPRICATED 22.09.2023
+#getProjectionGP <- function(parametersModel, outputModel){
+#  daysForPrediction <- 14
+#  #firstPredictionPoint <- outputModel$dateList$maxDay
+#  sizePrediction <- parametersModel$config$sizeGPProjection # >7
+#  
+#  numDays <- outputModel$dateList$numDays
+#  matrixSampleDays <- outputModel$matrixSampleDays
+#  #BORRARmatrixDerivatives <- outputModel$sampleDerivatives
+#  
+#  # Prediction - GP
+#  projectionGPInla <- outputModel$projectionGP
+#  
+#  matrixSampleAndPred <- rbind(matrixSampleDays[(numDays - daysForPrediction + 1):numDays,], projectionGPInla)
+#  tempDerivative <- getGrowthFromSamples(matrixSampleAndPred)
+#  projectionGRInla <- tempDerivative[daysForPrediction + (1:sizePrediction),]
+#  
+#  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
+#  if(parametersModel$config$derivativeFromGP == F)
+#    projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
+#  else
+#    projectionGR_onBoundary <- NA
+#  
+#  return(list(projectionGP = projectionGPInla[1:sizePrediction,], projectionGR = projectionGRInla[1:sizePrediction,],
+#              projectionGR_onBoundary = projectionGR_onBoundary,
+#              currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date], sizePrediction = sizePrediction))
+#}
 
 #' 20.09.2023 - code adapted from getGrowthFromSamples_GP() ... Key: find d1Matrix and dMatrixAll
 #'  currentDayId: Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
