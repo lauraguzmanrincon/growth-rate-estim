@@ -10,8 +10,9 @@
 #' theta.prior2.prec: precision matrix of theta prior
 #' BB.prior.rho: prior for log precision if beta-binomial case
 #' NB.prior.rho: prior for log precision if negative binomial case
-#' dayWeek: if T, the day-of-the-week effect is used. If F, the noise term is used
-#' dayWeek.prior.prec: prior for day-of-the-week effect or noise term
+#' NOdayWeek: if T, the day-of-the-week effect is used. If F, the noise term is used
+#' NOdayWeek.prior.prec: prior for day-of-the-week effect or noise term
+#' ... TODO
 #' sizeSample: samples to estimate posterior of parameters
 #' derivativeFromGP: if growth rate distribution is estimated from samples of GP derivative.
 #'   If F, dataset must have at least 7 time points between minDate and maxDate. If not, it will automatically use the numerical version.
@@ -54,8 +55,10 @@ setParametersFn <- function(linkType,
       sizeGPProjection = sizeGPProjection
       #computeTaylorProjection = F,
       #computeLinearProjection = T
-      )
-    )
+      ),
+    internal = list(
+      levelsWeek = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    ))
     return(parameters)
 }
 
@@ -80,7 +83,6 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
   # TODO remove this:
   #list2env(parametersModel$params, envir = environment())
   #list2env(parametersModel$config, envir = environment())
-  levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
   
   # Create auxiliar table with dates
   if(is.null(minDate)) minDate <- min(countTable$date)
@@ -122,7 +124,7 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
   
   # - Set priors
   # Prior for day of the week
-  priorDayWeek <- parametersModel$params$dayWeek.prior.prec
+  priorRandomEffect <- parametersModel$params$dayWeek.prior.prec
   # Prior for Gaussian process parameters, following (Lindgren, 2015, v63i19)
   vGP <- 2 - 1/2
   sigma0 <- parametersModel$params$prior2.sigma0
@@ -142,11 +144,25 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
   # - Create stack data
   spde1.idx <- inla.spde.make.index("day", n.spde = spde1$n.spde)
   # Create stacked data with two datasets (observations and prediction). For paper, I'm ignoring prediction.
+  if(parametersModel$params$randomEffect == "weekday"){ # NEW 22.09.2023' - correct extra information done at the beginning
+    A <- list(A1, 1)
+    effectsList <- list(spde1.idx,
+                        list(randomEffect = factor(dataForModel[order(dayId), dayWeek], levels = parametersModel$internal$levelsWeek)))
+  }else if(parametersModel$params$randomEffect == "all"){
+    A <- list(A1, 1)
+    effectsList <- list(spde1.idx,
+                        list(randomEffect = dataForModel[order(dayId), dayId]))
+  }else{
+    A <- list(A1)
+    effectsList <- list(spde1.idx)
+  }
   stackD <- inla.stack(data = list(positiveResults = dataForModel[order(dayId), positiveResults]),
-                       A = list(A1, 1, 1),
-                       effects = list(c(list(Intercept = 1), spde1.idx),
-                                      list(dayWeek = factor(dataForModel[order(dayId), dayWeek], levels = levelsWeek)),
-                                      list(dayId2 = dataForModel[order(dayId), dayId])),
+                       #A = list(A1, 1, 1),
+                       #effects = list(c(list(Intercept = 1), spde1.idx),
+                       #               list(dayWeek = factor(dataForModel[order(dayId), dayWeek], levels = levelsWeek)),
+                       #               list(dayId2 = dataForModel[order(dayId), dayId])),
+                       A = A,
+                       effects = effectsList,
                        tag = "est")
   # Create prediction data for the next parametersModel$config$sizeGPProjection days
   daysProjection <- parametersModel$config$sizeGPProjection + 1
@@ -155,19 +171,17 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
   A.xx <- inla.spde.make.A(mesh1d, xx)
   stack.pred <- inla.stack(data = list(positiveResults = NA),
                            A = list(A.xx),
-                           effects = list(c(list(Intercept = 1), spde1.idx)),
+                           #effects = list(c(list(Intercept = 1), spde1.idx)),
+                           effects = list(spde1.idx), # NEW 22.09.2023' - correct extra information done at the beginning
                            tag = "pred")
   joint.stack <- inla.stack(stackD, stack.pred)
   
   # Fit model (using INLA)
   cat("Fitting model ... ")
   constantTerm <- 2*parametersModel$params$hasConstant - 1
-  if(parametersModel$params$randomEffect == "weekday"){
-    formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1) + f(dayWeek, model = 'iid', hyper = priorDayWeek, constr = T)")
-  }else if(parametersModel$params$randomEffect == "all"){
-    formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1) + f(dayId2, model = 'iid', hyper = priorDayWeek, constr = T)")
+  if(parametersModel$params$randomEffect %in% c("weekday", "all")){
+    formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1) + f(randomEffect, model = 'iid', hyper = priorRandomEffect, constr = T)")
   }else{
-    #formula <- positiveResults ~ constantTerm + f(day, model = spde1)
     formulaText <- paste0("positiveResults ~ ", constantTerm, " + f(day, model = spde1)")
   }
   formula <- as.formula(formulaText)
@@ -210,15 +224,17 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   set1 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "APredictor"))
   #set2 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "Predictor"))
   set3 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "day"))
-  set4 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == case_when(parametersModel$params$randomEffect == "weekday" ~ "dayWeek",
-                                                                                    parametersModel$params$randomEffect == "all" ~ "dayId2",
-                                                                                    parametersModel$params$randomEffect == "none" ~ "NA")))
+  set4 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "randomEffect"))
   if(parametersModel$params$hasConstant) set5 <- sort(which(sapply(strsplit(rownms, ":"), function(x) x[[1]]) == "(Intercept)"))
   dayIndexInSample <- set3[objectInla$nonBoundaryIndices]
   
   # Create matrix of samples (and hyperparameters/weekday effect if needed)
   matrixSampleDays <- sapply(sampleList, function(x) x$latent[dayIndexInSample,1])
-  matrixSampleWeekday <- sapply(sampleList, function(x) x$latent[set4,1])
+  if(parametersModel$params$randomEffect != "none"){
+    matrixSampleRandomEffect <- sapply(sampleList, function(x) x$latent[set4,1])
+  }else{
+    matrixSampleRandomEffect <- NULL
+  }
   matrixSampleEta <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
   if(parametersModel$params$hasConstant)
     matrixSampleIntercept <- 3*sapply(sampleList, function(x) x$latent[set5,1]) # TODO
@@ -228,12 +244,8 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   nameDispersionINLA <- ifelse(parametersModel$params$linkType == "NB",
                                "size for the nbinomial observations (1/overdispersion)",
                                "overdispersion for the betabinomial observations")
-  namePrecisionINLA <- case_when(parametersModel$params$randomEffect == "weekday" ~ "Precision for dayWeek",
-                                 parametersModel$params$randomEffect == "all" ~ "Precision for dayId2",
+  namePrecisionINLA <- case_when(parametersModel$params$randomEffect %in% c("weekday", "all") ~ "Precision for randomEffect",
                                  parametersModel$params$randomEffect == "none" ~ "NA")
-  #matrixSampleHyper <- sapply(sampleList, function(x) exp(x$hyperpar[c("Theta1 for day", "Theta2 for day")]))
-  #matrixSampleHyperAll <- sapply(sampleList, function(x) x$hyperpar) # overdisp log(theta1) log(theta2) precision
-  #matrixSampleHyperAll <- rbind(sapply(sampleList, function(x) log(x$hyperpar[c(nameDispersionINLA, namePrecisionINLA)])), ...
   matrixSampleHyperAll <- sapply(sampleList, function(x) x$hyperpar[c("Theta1 for day", "Theta2 for day",
                                                                       nameDispersionINLA, namePrecisionINLA)]) # NEW 08.09.2023
   rownames(matrixSampleHyperAll) <- c("theta1", "theta2", "overdispersion", "precision")
@@ -260,7 +272,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
   listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll,
-                                      matrixSampleEta, matrixSampleWeekday, matrixSampleIntercept, objectInla, parametersModel)
+                                      matrixSampleEta, matrixSampleRandomEffect, matrixSampleIntercept, objectInla, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
   setkey(objectInla$dateList$dateTable, dayId)
@@ -278,7 +290,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
                       posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
                       dateList = objectInla$dateList, dataForModel = objectInla$dataForModel)
   output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives,
-                         matrixSampleWeekday = matrixSampleWeekday, matrixSampleHyperAll = matrixSampleHyperAll, matrixSampleIntercept = matrixSampleIntercept)
+                         matrixSampleRandomEffect = matrixSampleRandomEffect, matrixSampleHyperAll = matrixSampleHyperAll, matrixSampleIntercept = matrixSampleIntercept)
   output_projection <- list(projectionGP = projectionGP)
   
   output <- output_main
@@ -306,7 +318,7 @@ getGrowthFromSamples <- function(matrixSampleDays){
 # INTERNAL
 # TODO objectInla should not be arg? should be undo into dataForModel as arg only and objectInla optional?
 computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleHyper,
-                              matrixSampleEta, matrixSampleWeekday, matrixSampleIntercept,
+                              matrixSampleEta, matrixSampleRandomEffect, matrixSampleIntercept,
                               objectInla, parametersModel,
                               ifINLAMarginal = FALSE){
   numDays <- nrow(matrixSampleDays)
@@ -420,12 +432,13 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # ---------------------------------------------------- #
   if(parametersModel$params$randomEffect != "none"){
     # NEW 19.09.2023
-    posteriorRandomEffect <- data.table(index = 1:nrow(matrixSampleWeekday),
-                                        median = apply(matrixSampleWeekday, 1, quantile, probs = 0.5, na.rm = T),
-                                        q0.025 = apply(matrixSampleWeekday, 1, quantile, probs = 0.025, na.rm = T),
-                                        q0.975 = apply(matrixSampleWeekday, 1, quantile, probs = 0.975, na.rm = T),
-                                        q0.25 = apply(matrixSampleWeekday, 1, quantile, probs = 0.250, na.rm = T),
-                                        q0.75 = apply(matrixSampleWeekday, 1, quantile, probs = 0.750, na.rm = T))
+    posteriorRandomEffect <- data.table(index = 1:nrow(matrixSampleRandomEffect),
+                                        median = apply(matrixSampleRandomEffect, 1, quantile, probs = 0.5, na.rm = T),
+                                        q0.025 = apply(matrixSampleRandomEffect, 1, quantile, probs = 0.025, na.rm = T),
+                                        q0.975 = apply(matrixSampleRandomEffect, 1, quantile, probs = 0.975, na.rm = T),
+                                        q0.25 = apply(matrixSampleRandomEffect, 1, quantile, probs = 0.250, na.rm = T),
+                                        q0.75 = apply(matrixSampleRandomEffect, 1, quantile, probs = 0.750, na.rm = T))
+    if(parametersModel$params$randomEffect == "weekday") posteriorRandomEffect[order(index), weekDay := parametersModel$internal$levelsWeek]
   }else{
     posteriorRandomEffect <- NULL
   }
@@ -636,12 +649,13 @@ updateOutputVersion18Sep2023 <- function(outputModel, parametersModel){
                                                    q0.25_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.250, na.rm = T),
                                                    q0.75_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.750, na.rm = T))]
   
-  outputModel$posteriorRandomEffect <- data.table(index = 1:nrow(outputModel$matrixSampleWeekday),
-                                                  median = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.5, na.rm = T),
-                                                  q0.025 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.025, na.rm = T),
-                                                  q0.975 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.975, na.rm = T),
-                                                  q0.25 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.250, na.rm = T),
-                                                  q0.75 = apply(outputModel$matrixSampleWeekday, 1, quantile, probs = 0.750, na.rm = T))
+  outputModel$matrixSampleRandomEffect <- outputModel$matrixSampleWeekday
+  outputModel$posteriorRandomEffect <- data.table(index = 1:nrow(outputModel$matrixSampleRandomEffect),
+                                                  median = apply(outputModel$matrixSampleRandomEffect, 1, quantile, probs = 0.5, na.rm = T),
+                                                  q0.025 = apply(outputModel$matrixSampleRandomEffect, 1, quantile, probs = 0.025, na.rm = T),
+                                                  q0.975 = apply(outputModel$matrixSampleRandomEffect, 1, quantile, probs = 0.975, na.rm = T),
+                                                  q0.25 = apply(outputModel$matrixSampleRandomEffect, 1, quantile, probs = 0.250, na.rm = T),
+                                                  q0.75 = apply(outputModel$matrixSampleRandomEffect, 1, quantile, probs = 0.750, na.rm = T))
   
   return(list(outputModel = outputModel, parametersModel = parametersModel))
 }
@@ -957,8 +971,7 @@ plotRandomEffect <- function(outputModel, parametersModel){
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), #legend.position = c(0.62, 0.75),
           legend.key = element_blank())
   if(parametersModel$params$randomEffect == "weekday"){
-    levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-    p0 <- p0 + scale_x_continuous(breaks = 1:7, labels = levelsWeek)
+    p0 <- p0 + scale_x_continuous(breaks = 1:7, labels = parametersModel$internal$levelsWeek)
   }
   return(p0)
 }

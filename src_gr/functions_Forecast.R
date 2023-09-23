@@ -227,6 +227,14 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
   
   # Create matrices of parameters
   # TODO same as in computePosteriors()... Unify!
+  if(parametersModel$params$randomEffect == "weekday"){
+    predictionWeekday <- weekdays(projectionSamplesGP$currentDate + (1:sizePrediction))
+    matrixRandomEffect <- outputModel$matrixSampleRandomEffect[match(predictionWeekday, levelsWeek),]
+  }else if(parametersModel$params$randomEffect == "all"){
+    matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = parametersModel$config$sizeSample)
+  }else{
+    matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = parametersModel$config$sizeSample)
+  }
   matrixSampleOverdisp <- outputModel$matrixSampleHyper[c("overdispersion"),]
   predictionWeekday <- outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, weekdays(date + 1:sizePrediction)]
   etaSample <- projectionSamplesGP$projectionGP + outputModel$matrixSampleWeekday[match(predictionWeekday, levelsWeek),]
