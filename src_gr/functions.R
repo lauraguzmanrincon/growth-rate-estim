@@ -240,6 +240,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
     matrixSampleIntercept <- 2*sapply(sampleList, function(x) x$latent[set5,1]) # TODO why x2?
   }else{
     matrixSampleIntercept <- rep(0, parametersModel$config$sizeSample)
+  }
   
   nameDispersionINLA <- ifelse(parametersModel$params$linkType == "NB",
                                "size for the nbinomial observations (1/overdispersion)",

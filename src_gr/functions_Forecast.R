@@ -88,7 +88,6 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
   sizeSample <- parametersModel$config$sizeSample
   numDaysPast <- min(outputModel$dateList$numDays, daysForPrediction)
   matrixSampleGP <- outputModel$matrixSampleDays[(currentDayId - daysForPrediction + 1):currentDayId,]
-  #BORRARmatrixDerivatives <- outputModel$sampleDerivatives
   
   # Compute distance matrix for ordered days
   pastInterval <- 1:numDaysPast
@@ -162,54 +161,17 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
   #?samplesGR <- sampleDerivatives
   
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F)
-    projectionGR_onBoundary <- rep(0, sizeSample) # TODO #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
-  else
+  if(parametersModel$config$derivativeFromGP == F){
+    projectionGR_onBoundary <- rep(0, sizeSample) #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
+    # TODO compute GR on boundary (derivative + transformation)
+  }else{
     projectionGR_onBoundary <- NA
+  }
   
-  return(list(projectionGP = sampleProjections, projectionGR = sampleDerivatives,
+  return(list(projectionGP = sampleProjections, projectionGR = samplesGR,
               projectionGR_onBoundary = projectionGR_onBoundary,
               currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date],
               sizePrediction = sizePrediction))
-}
-
-getGrowthFromSamples_GPBORRAR <- function(matrixSampleGP, samplesHyperparam, sigma0, range0){
-  numDays <- nrow(matrixSampleGP)
-  sizeSample <- ncol(matrixSampleGP)
-  
-  # Compute distance matrix for ordered days
-  distanceMatrix <- sapply(1:numDays, function(nd) abs(nd - (1:numDays)))
-  auxRelativeDistanceMatrix <- matrix(data = 1:numDays, nrow = numDays, ncol = numDays, byrow = F) -
-    matrix(data = 1:numDays, nrow = numDays, ncol = numDays, byrow = T)
-  
-  # Compute auxiliar vectors, with vGP = 3/2
-  sig2Vector <- (sigma0*exp(samplesHyperparam["theta1",]))^2
-  kappaVector <- sqrt(12)/(range0*exp(samplesHyperparam["theta2",]))
-  
-  # Loop per sample of (f1, ..., fn, log.tau, log.kappa)
-  sampleDerivatives <- matrix(0, nrow = sizeSample, ncol = numDays)
-  for(indexSample in 1:sizeSample){
-    sig2Value <- sig2Vector[indexSample]
-    kappaVal <- kappaVector[indexSample]
-    
-    expMatrix <- exp(-kappaVal*distanceMatrix)
-    deltaMatrix <- sig2Value*(1 + kappaVal*distanceMatrix)*expMatrix
-    invDeltaMatrix <- chol2inv(chol(deltaMatrix)) # solve vs. chol2inv system.time(31700*system.time(solve(deltaMatrix))/60)
-    fVector <- matrixSampleGP[, indexSample]
-    
-    # Compute derivative matrices of f: D1, diag(D) in notes respectively
-    d1Matrix <- -sig2Value*kappaVal^2*auxRelativeDistanceMatrix*expMatrix
-    #dMatrix <- sig2Value*kappaVal^2*diag(expMatrix)*(1 - kappaVal*diag(distanceMatrix)) # here we only compute the diagonal
-    dMatrixAll <- sig2Value*kappaVal^2*expMatrix*(1 - kappaVal*distanceMatrix)
-    
-    meanMVN <- d1Matrix%*%invDeltaMatrix%*%fVector
-    
-    #iSample <- sapply(1:numDays, function(x) rnorm(n = 1, mean = meanMVN[x], sd = sqrt( dMatrix[x] - d1Matrix[x,]%*%invDeltaMatrix%*%d1Matrix[x,] )))
-    iSample <- MASS::mvrnorm(n = 1, mu = d1Matrix%*%invDeltaMatrix%*%fVector, Sigma = dMatrixAll - d1Matrix%*%invDeltaMatrix%*%t(d1Matrix))
-    
-    sampleDerivatives[indexSample,] <- iSample
-  }
-  return(t(sampleDerivatives))
 }
 
 #' Function for projections that provide a GP and a GR !!!
