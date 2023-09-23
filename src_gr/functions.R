@@ -343,7 +343,7 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # ---------------------------------------------------- #
   # Compute posterior of Gaussian process in real space (incidence or positivity)
   cat("Computing posterior of incidence... ")
-  if(ifINLAMarginal){
+  if(ifINLAMarginal & !parametersModel$params$hasConstant){
     # (this version is slow and applies only to INLA)
     samplesGP <- objectInla$marginals.random$day[objectInla$nonBoundaryIndices]
     if(parametersModel$params$linkType %in% c("NB")){
@@ -356,41 +356,28 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
                                     t(sapply(samplesGP, function(x) inla.qmarginal(c(0.5, 0.025, 0.975, 0.25, 0.75), x))))
     setnames(posteriorTransfGP,
              c("V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10"),
-             c("median_transGP", "q0.025_transGP", "q0.975_transGP", "q0.25_transGP", "q0.75_transGP",
+             c("median_transConsGP", "q0.025_transConsGP", "q0.975_transConsGP", "q0.25_transConsGP", "q0.75_transConsGP",
                "median_GP", "q0.025_GP", "q0.975_GP", "q0.25_GP", "q0.75_GP")) # NEW 19.09.2023
   }else{
     # NEW 09.01.2023
+    repSampleIntercept <- matrix(c(matrixSampleIntercept), nrow = numDays, ncol = ncol(matrixSampleDays), byrow = T)
     if(parametersModel$params$linkType %in% c("NB")){
-      transformedSamples <- exp(matrixSampleDays)
+      transformedSamples <- exp(matrixSampleDays + repSampleIntercept)
     }else if(parametersModel$params$linkType == "BB"){
-      transformedSamples <- exp(matrixSampleDays)/(1 + exp(matrixSampleDays))
+      transformedSamples <- exp(matrixSampleDays + repSampleIntercept)/(1 + exp(matrixSampleDays + repSampleIntercept))
     }
     posteriorTransfGP <- data.table(dayId = 1:numDays,
-                                  median_transGP = apply(transformedSamples, 1, quantile, probs = 0.5, na.rm = T),
-                                  q0.025_transGP = apply(transformedSamples, 1, quantile, probs = 0.025, na.rm = T),
-                                  q0.975_transGP = apply(transformedSamples, 1, quantile, probs = 0.975, na.rm = T),
-                                  q0.25_transGP = apply(transformedSamples, 1, quantile, probs = 0.250, na.rm = T),
-                                  q0.75_transGP = apply(transformedSamples, 1, quantile, probs = 0.750, na.rm = T),
+                                  median_transConsGP = apply(transformedSamples, 1, quantile, probs = 0.5, na.rm = T),
+                                  q0.025_transConsGP = apply(transformedSamples, 1, quantile, probs = 0.025, na.rm = T),
+                                  q0.975_transConsGP = apply(transformedSamples, 1, quantile, probs = 0.975, na.rm = T),
+                                  q0.25_transConsGP = apply(transformedSamples, 1, quantile, probs = 0.250, na.rm = T),
+                                  q0.75_transConsGP = apply(transformedSamples, 1, quantile, probs = 0.750, na.rm = T),
                                   median_GP = apply(matrixSampleDays, 1, quantile, probs = 0.5, na.rm = T),
                                   q0.025_GP = apply(matrixSampleDays, 1, quantile, probs = 0.025, na.rm = T),
                                   q0.975_GP = apply(matrixSampleDays, 1, quantile, probs = 0.975, na.rm = T),
                                   q0.25_GP = apply(matrixSampleDays, 1, quantile, probs = 0.250, na.rm = T),
                                   q0.75_GP = apply(matrixSampleDays, 1, quantile, probs = 0.750, na.rm = T))
     
-    if(parametersModel$params$hasConstant){
-      # NEW 09.01.2023
-      repSampleIntercept <- matrix(c(matrixSampleIntercept), nrow = numDays, ncol = ncol(matrixSampleDays), byrow = T)
-      if(parametersModel$params$linkType %in% c("NB")){
-        transformedSamplesWithCons <- exp(matrixSampleDays + repSampleIntercept)
-      }else if(parametersModel$params$linkType == "BB"){
-        transformedSamplesWithCons <- exp(matrixSampleDays + repSampleIntercept)/(1 + exp(matrixSampleDays + repSampleIntercept))
-      }
-      posteriorTransfGP[order(dayId), ":="(median_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.5, na.rm = T),
-                               q0.025_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.025, na.rm = T),
-                               q0.975_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.975, na.rm = T),
-                               q0.25_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.250, na.rm = T),
-                               q0.75_transConsGP = apply(transformedSamplesWithCons, 1, quantile, probs = 0.750, na.rm = T))]
-    }
   }
   
   # ---------------------------------------------------- #
@@ -582,10 +569,10 @@ stackOutputMultipleGroups <- function(output, partitionTable){
   
   setkeyv(posteriorGrowth, c("date", "idPartition"))
   setkeyv(posteriorTransfGP, c("date", "idPartition"))
-  posteriorGrowth[posteriorTransfGP, ":="(median_transGP = i.median_transGP, q0.025_transGP = i.q0.025_transGP, q0.975_transGP = i.q0.975_transGP,
-                                          q0.25_transGP = i.q0.25_transGP, q0.75_transGP = i.q0.75_transGP,
-                                          median_GP = i.median_GP, q0.025_GP = i.q0.025_GP, q0.975_GP = i.q0.975_GP,
+  posteriorGrowth[posteriorTransfGP, ":="(median_GP = i.median_GP, q0.025_GP = i.q0.025_GP, q0.975_GP = i.q0.975_GP,
                                           q0.25_GP = i.q0.25_GP, q0.75_GP = i.q0.75_GP,
+                                          #median_transGP = i.median_transGP, q0.025_transGP = i.q0.025_transGP, q0.975_transGP = i.q0.975_transGP,
+                                          #q0.25_transGP = i.q0.25_transGP, q0.75_transGP = i.q0.75_transGP,
                                           median_transConsGP = i.median_transConsGP, q0.025_transConsGP = i.q0.025_transConsGP, q0.975_transConsGP = i.q0.975_transConsGP,
                                           q0.25_transConsGP = i.q0.25_transConsGP, q0.75_transConsGP = i.q0.75_transConsGP,
                                           positiveResults = i.positiveResults)]
@@ -679,17 +666,10 @@ plotFitting <- function(outputModel, parametersModel){
   dataToPlotPosterior[, ratio := pmin(1, pmax(0, positiveResults/numberTest))]
   dataToPlotPosterior[, isWeekend := weekdays(date) %in% c("Saturday", "Sunday")]
   dataToPlotPosterior[, weekendLabel := factor(ifelse(isWeekend, "weekend", "weekday"), levels = c("weekend", "weekday"))]
-  if(!parametersModel$params$hasConstant){
-    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
-                                                median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
-  }else{
-    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
-                                                median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
-  }
+  dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
+                                              median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
   dataToPlot[, typeLevel := factor(type, levels = c("model fit", "Gaussian process"))]
   p01 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
     geom_ribbon(data = dataToPlot[typeLevel != "points"], aes(ymin = q0.025, ymax = q0.975, fill = typeLevel), alpha = 0.5) +
@@ -848,40 +828,31 @@ printHyperparametersSummary <- function(outputModel, parametersModel){
 
 plotFittingSamples <- function(outputModel, parametersModel){
   # TODO !!!!! check
-  # TODO do dots for BB
-  #samples <- outputModel$matrixSampleDays
   samples <- outputModel$matrixSampleDays + # TODO ok? # 22.09.2023
     matrix(outputModel$matrixSampleIntercept, nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample, byrow = T)
   rownames(samples) <- NULL
-  dataSamplesGP <- data.table(suppressWarnings(melt(samples, varnames = c("dayId", "sample"))))
+  dataSamplesGPCons <- data.table(suppressWarnings(melt(samples, varnames = c("dayId", "sample"))))
   
-  setkey(dataSamplesGP, dayId)
+  setkey(dataSamplesGPCons, dayId)
   setkey(outputModel$dataForModel, dayId)
-  dataSamplesGP[outputModel$dataForModel, date := i.date]
+  dataSamplesGPCons[outputModel$dataForModel, date := i.date]
   
   if(parametersModel$params$linkType == "BB"){
-    dataSamplesGP[, valueTr := exp(value)/(1 + exp(value))]
+    dataSamplesGPCons[, valueTr := exp(value)/(1 + exp(value))]
   }else if(parametersModel$params$linkType == "NB"){
-    dataSamplesGP[, valueTr := exp(value)]
+    dataSamplesGPCons[, valueTr := exp(value)]
   }
   randomCols <- sample(ncol(outputModel$matrixSampleDays)) # for colour of samples
-  dataSamplesGP[, colourId := randomCols[sample]]
+  dataSamplesGPCons[, colourId := randomCols[sample]]
   
   dataToPlotPosterior <- outputModel$posteriorTransfGP
   dataToPlotPosterior[, ratio := pmin(1, pmax(0, positiveResults/numberTest))]
   dataToPlotPosterior[, isWeekend := weekdays(date) %in% c("Saturday", "Sunday")]
   dataToPlotPosterior[, weekendLabel := factor(ifelse(isWeekend, "weekend", "weekday"), levels = c("weekend", "weekday"))]
-  if(!parametersModel$params$hasConstant){
-    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
-                                                median = median_transGP, q0.025 = q0.025_transGP, q0.975 = q0.975_transGP, type = "Gaussian process")])
-  }else{
-    dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
-                        dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
-                                                median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
-  }
+  dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio, positiveResults, median = NA, q0.025 = NA, q0.975 = NA, type = "points")],
+                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA, median = medianFT, q0.025 = q0.025FT, q0.975 = q0.975FT, type = "model fit")],
+                      dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
+                                              median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
   if(parametersModel$params$linkType == "NB"){
     dataToPlot[, points := positiveResults]
   }else{
@@ -889,15 +860,19 @@ plotFittingSamples <- function(outputModel, parametersModel){
   }
   dataToPlot[, typeLevel := factor(type, levels = c("model fit", "Gaussian process"))]
   p0 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
-    geom_line(data = dataSamplesGP, aes(y = valueTr, group = sample, colour = colourId), alpha = 0.5) + # colour = "gray50"
+    geom_line(data = dataSamplesGPCons, aes(y = valueTr, group = sample, colour = colourId), alpha = 0.5) + # colour = "gray50"
     #geom_ribbon(data = dataToPlot[typeLevel == "Gaussian process"], aes(ymin = q0.025, ymax = q0.975, fill = typeLevel), alpha = 0.1) +
-    geom_line(data = dataToPlot[typeLevel == "Gaussian process"], aes(y = median), linetype = 2, colour = "#F5CC14") +
+    geom_line(data = dataToPlot[typeLevel == "Gaussian process"], aes(y = median), linetype = 2, colour = "black") + # #F5CC14
     geom_point(aes(y = points), colour = "red", size = 0.5) +
     scale_colour_gradient(guide = "none", low = "gray90", high = "gray10") +
     #scale_colour_manual(name = "posterior (median, 95% CI)", values = "#F5CC14") +
     #scale_fill_manual(name = "posterior (median, 95% CI)", values = "#F5CC14") +
     #scale_x_date(labels = scales::label_date(formatBreaks), breaks = dateBreaks2) +
     scale_x_date(expand = c(0,0)) +
+    scale_y_continuous(labels = unit_format(unit = "", scale = ifelse(parametersModel$params$linkType == "NB", 1, 1e-3))) + #unit = "K"
+    labs(x = "day", y = ifelse(parametersModel$params$linkType == "NB",
+                               "model posterior samples\nand proportion of positives",
+                               "model posterior samples\nand count of positives (thousands)")) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.title.x = element_blank(),
           legend.key = element_blank(), panel.grid.major.x = element_line(linetype = 2, colour = "gray90")) # 0.6
   
@@ -907,7 +882,6 @@ plotFittingSamples <- function(outputModel, parametersModel){
 
 plotFittingSamplesGR <- function(outputModel, parametersModel){
   # TODO !!!!! check
-  # TODO do dots for BB
   
   # Transform samples from GP derivative to GR
   samplesGR <- getSamplesGR(outputModel$matrixSampleDays, outputModel$sampleDerivatives, parametersModel)
@@ -934,15 +908,16 @@ plotFittingSamplesGR <- function(outputModel, parametersModel){
                       guide = guide_legend(override.aes = list(colour = c("black", NA, NA), fill = c(NA, "gray40", "gray70")))) + # trick for legend
     #scale_x_date(labels = scales::label_date(c("%d %b\n(%Y)", rep("%d %b", length(dateBreaks) - 1))), breaks = dateBreaks) +
     scale_y_continuous(labels = scales::percent_format(accuracy = NULL)) +
-    labs(x = "day", y = "growth rate posterior") +
+    labs(x = "day", y = "growth rate posterior samples") +
     scale_x_date(expand = c(0,0)) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), #legend.position = c(0.62, 0.75),
           legend.key = element_blank(), panel.grid.major.x = element_line(linetype = 2, colour = "gray90"))
   return(p0)
-}
+}x
 
 #' .
 plotLatent <- function(outputModel){
+  # TODO plot GP or plot latent (GP + constant)?
   dataToPlotPosterior <- outputModel$posteriorTransfGP
   dataToPlot <- rbind(dataToPlotPosterior[, .(dayId, date, median = median_GP, qlow = NA, qhigh = NA, type = "median")],
                       dataToPlotPosterior[, .(dayId, date, median = NA, qlow = q0.025_GP, qhigh = q0.975_GP, type = "95% CI")],
@@ -987,3 +962,13 @@ plotRandomEffect <- function(outputModel, parametersModel){
   }
   return(p0)
 }
+
+plotIntercept <- function(outputModel, parametersModel){
+  dataToPlot <- data.table(samples = outputModel$matrixSampleIntercept)
+  p0 <- ggplot(dataToPlot, aes(x = samples)) + theme_laura() +
+    geom_density(alpha = 0.6, fill = "#87A696") +
+    #geom_point(aes(x = samples, y = 0, colour = type)) +
+    labs(x = "intercept", y = "density")
+  return(p0)
+}
+
