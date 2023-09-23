@@ -236,9 +236,9 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
     matrixSampleRandomEffect <- NULL
   }
   matrixSampleEta <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
-  if(parametersModel$params$hasConstant)
-    matrixSampleIntercept <- 3*sapply(sampleList, function(x) x$latent[set5,1]) # TODO
-  else
+  if(parametersModel$params$hasConstant){
+    matrixSampleIntercept <- 2*sapply(sampleList, function(x) x$latent[set5,1]) # TODO why x2?
+  }else{
     matrixSampleIntercept <- rep(0, parametersModel$config$sizeSample)
   
   nameDispersionINLA <- ifelse(parametersModel$params$linkType == "NB",
@@ -328,13 +328,6 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # ---------------------------------------------------- #
   # Compute log (or inv. logit) of posterior of Gaussian process derivative in transformed space
   cat("Computing posterior of growth rate ... ")
-  #if(parametersModel$params$linkType == "BB"){
-  #  tempExpGP <- exp(matrixSampleDays)
-  #  tempLogit <- tempExpGP/(1 + tempExpGP)
-  #  tempList <- sampleDerivatives/(1 + tempLogit)
-  #}else if(parametersModel$params$linkType == "NB"){
-  #  tempList <- sampleDerivatives
-  #}
   tempList <- getSamplesGR(matrixSampleDays, sampleDerivatives, parametersModel)
   tempDoubling <- abs(log(2)/tempList)
   posteriorGrowth <- data.table(dayId = 1:numDays,
@@ -398,8 +391,6 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # Compute the model posterior (as in R31.R)
   sizeSample <- parametersModel$config$sizeSample
   sampleOverdisp <- matrixSampleHyper[c("overdispersion"),]
-  #predictionWeekday <- ?
-  #matrixSampleEta <- matrixSampleDays + matrixSampleWeekday[match(predictionWeekday, levelsWeek),]
   if(parametersModel$params$linkType == "NB"){
     samplesFit <- matrix(rnbinom(n = matrix(1, nrow = numDays, ncol = sizeSample),
                                 size = matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T),
@@ -641,8 +632,8 @@ updateOutputVersion18Sep2023 <- function(outputModel, parametersModel){
   parametersModel$params$randomEffect <- ifelse(parametersModel$params$dayWeek == "day", "weekday", "all")
   
   rownames(outputModel$matrixSampleHyperAll) <- c("overdispersion", "theta1", "theta2", "precision")
-  outputModel$posteriorTransfGP[, ":="(median_transGP = median, q0.025_transGP = q0.025, q0.975_transGP = q0.975,
-                                       q0.25_transGP = q0.25, q0.75_transGP = q0.75)]
+  outputModel$posteriorTransfGP[, ":="(median_transConsGP = median, q0.025_transConsGP = q0.025, q0.975_transConsGP = q0.975,
+                                       q0.25_transConsGP = q0.25, q0.75_transConsGP = q0.75)]
   outputModel$posteriorTransfGP[order(dayId), ":="(median_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.5, na.rm = T),
                                                    q0.025_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.025, na.rm = T),
                                                    q0.975_GP = apply(outputModel$matrixSampleDays, 1, quantile, probs = 0.975, na.rm = T),
@@ -927,7 +918,7 @@ plotFittingSamplesGR <- function(outputModel, parametersModel){
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), #legend.position = c(0.62, 0.75),
           legend.key = element_blank(), panel.grid.major.x = element_line(linetype = 2, colour = "gray90"))
   return(p0)
-}x
+}
 
 #' .
 plotLatent <- function(outputModel){
