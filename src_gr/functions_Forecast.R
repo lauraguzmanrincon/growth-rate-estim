@@ -236,13 +236,17 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
     matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = parametersModel$config$sizeSample)
   }
   matrixSampleOverdisp <- outputModel$matrixSampleHyper[c("overdispersion"),]
-  predictionWeekday <- outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, weekdays(date + 1:sizePrediction)]
-  etaSample <- projectionSamplesGP$projectionGP + outputModel$matrixSampleWeekday[match(predictionWeekday, levelsWeek),]
+  matrixIntercept <- matrix(outputModel$matrixSampleIntercept,
+                            nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = T)
+  etaSample <- matrixIntercept + projectionSamplesGP$projectionGP + matrixRandomEffect
   rhoSample <- matrix(matrixSampleOverdisp, nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = T)
+  
+  #?matrixIntercept <- 0
   
   # Create projection table with samples of relevant model parameters
   if(parametersRun$params$linkType == "NB"){
     mupSample <- exp(etaSample)
+    gpTransSample <- exp(matrixIntercept + projectionSamplesGP$projectionGP)
     tableSamples <- data.table(lastDayId = currentDayId,
                                dayId = currentDayId + (1:sizePrediction),
                                sample = rep(1:parametersModel$config$sizeSample, each = sizePrediction),
@@ -250,12 +254,14 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                #sample = 1:parametersModel$config$sizeSample, # BUG!!!
                                gp = c(projectionSamplesGP$projectionGP),
                                gr = c(projectionSamplesGP$projectionGR),
-                               gpTrans = c(exp(projectionSamplesGP$projectionGP)),
+                               gpTrans = c(gpTransSample),
                                eta = c(etaSample),
                                mu = c(mupSample),
                                rho = c(rhoSample))
   }else{
     mupSample <- exp(etaSample)/(1 + exp(etaSample))
+    gpTransSample <- exp(matrixIntercept + projectionSamplesGP$projectionGP)/
+      (1 + exp(matrixIntercept + projectionSamplesGP$projectionGP))
     
     # Recall: mup = a/(a+b), rho = 1/(a+b+1). See Other_files/.../NLADoc_betabinomial.pdf or inla.doc("betabinomial")
     aS <- mupSample*(1 - rhoSample)/rhoSample
@@ -267,7 +273,7 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                sample = rep(1:parametersModel$config$sizeSample, each = sizePrediction),
                                gp = c(projectionSamplesGP$projectionGP),
                                gr = c(projectionSamplesGP$projectionGR),
-                               gpTrans = c(exp(projectionSamplesGP$projectionGP)/(1 + exp(projectionSamplesGP$projectionGP))),
+                               gpTrans = c(gpTransSample),
                                eta = c(etaSample),
                                mu = c(mupSample),
                                rho = c(rhoSample),
@@ -302,9 +308,9 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                        gr_q025 = quantile(gr, 0.025), gr_q25 = quantile(gr, 0.25), gr_median = quantile(gr, 0.5),
                                        gr_q75 = quantile(gr, 0.75), gr_q975 = quantile(gr, 0.975),
                                        #
-                                       gpTrans_q025 = quantile(gpTrans, 0.025), gpTrans_q25 = quantile(gpTrans, 0.25),
-                                       gpTrans_median = quantile(gpTrans, 0.5),
-                                       gpTrans_q75 = quantile(gpTrans, 0.75), gpTrans_q975 = quantile(gpTrans, 0.975),
+                                       gpConsTrans_q025 = quantile(gpTrans, 0.025), gpConsTrans_q25 = quantile(gpTrans, 0.25),
+                                       gpConsTrans_median = quantile(gpTrans, 0.5),
+                                       gpConsTrans_q75 = quantile(gpTrans, 0.75), gpConsTrans_q975 = quantile(gpTrans, 0.975),
                                        #
                                        eta_q025 = quantile(eta, 0.025), eta_q25 = quantile(eta, 0.25), eta_median = quantile(eta, 0.5),
                                        eta_q75 = quantile(eta, 0.75), eta_q975 = quantile(eta, 0.975),
@@ -338,8 +344,10 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                                      gp_q025 = i.q0.025_GP, gp_q25 = i.q0.25_GP, gp_median = i.median_GP, gp_q75 = i.q0.75_GP, gp_q975 = i.q0.975_GP,
                                                      #gpTrans_q025 = i.q0.025FT, gpTrans_q25 = i.q0.25FT, gpTrans_median = i.medianFT,
                                                      #gpTrans_q75 = i.q0.75FT, gpTrans_q975 = i.q0.975FT) # removed 19.09.2023
-                                                     gpTrans_q025 = i.q0.025_transGP, gpTrans_q25 = i.q0.25_transGP, gpTrans_median = i.median_transGP,
-                                                     gpTrans_q75 = i.q0.75_transGP, gpTrans_q975 = i.q0.975_transGP)]
+                                                     gpConsTrans_q025 = i.q0.025_transConsGP, gpConsTrans_q25 = i.q0.25_transConsGP,
+                                                     gpConsTrans_median = i.median_transConsGP,
+                                                     gpConsTrans_q75 = i.q0.75_transConsGP, gpConsTrans_q975 = i.q0.975_transConsGP)]
+    # TODO Double-check the above correct!!!!
   }else{
     tableSamples_boundary <- NA
     tableProjections_boundary <- NA
@@ -373,8 +381,8 @@ createTableProjectionNull <- function(outputModel = outputModel, parametersModel
                       #
                       gr_q025 = 0, gr_q25 = 0, gr_median = 0, gr_q75 = 0, gr_q975 = 0,
                       #
-                      gpTrans_q025 = as.numeric(NA), gpTrans_q25 = as.numeric(NA), gpTrans_median = as.numeric(NA),
-                      gpTrans_q75 = as.numeric(NA), gpTrans_q975 = as.numeric(NA)
+                      gpConsTrans_q025 = as.numeric(NA), gpConsTrans_q25 = as.numeric(NA), gpConsTrans_median = as.numeric(NA),
+                      gpConsTrans_q75 = as.numeric(NA), gpConsTrans_q975 = as.numeric(NA)
                       #gpTrans_q025 = pmax(0, qnorm(0.025, mean = positiveResultsLastDay, sd = sdPast)),
                       #gpTrans_q25 = pmax(0, qnorm(0.25, mean = positiveResultsLastDay, sd = sdPast)),
                       #gpTrans_median = positiveResultsLastDay,
@@ -499,9 +507,9 @@ plotProjection <- function(listProjection, outputModel, parametersModel, futureT
       geom_ribbon(aes(ymin = q0.025, ymax = q0.975), fill = "#EFDABD", alpha = 0.5) +
       geom_ribbon(aes(ymin = q0.25, ymax = q0.75), fill = "#D7A35B", alpha = 0.5) +
       geom_line(aes(y = median), colour = "#31220C") +
-      geom_ribbon(data = dataToPlotAfter, aes(ymin = gpTrans_q025, ymax = gpTrans_q975), fill = "#EFDABD", alpha = 0.5) +
-      geom_ribbon(data = dataToPlotAfter, aes(ymin = gpTrans_q25, ymax = gpTrans_q75), fill = "#D7A35B", alpha = 0.5) +
-      geom_line(data = dataToPlotAfter, aes(y = gpTrans_median), colour = "#31220C")
+      geom_ribbon(data = dataToPlotAfter, aes(ymin = gpConsTrans_q025, ymax = gpConsTrans_q975), fill = "#EFDABD", alpha = 0.5) +
+      geom_ribbon(data = dataToPlotAfter, aes(ymin = gpConsTrans_q25, ymax = gpConsTrans_q75), fill = "#D7A35B", alpha = 0.5) +
+      geom_line(data = dataToPlotAfter, aes(y = gpConsTrans_median), colour = "#31220C")
   }
   
   #return(suppressWarnings(multiplot(ggP1, ggP2, cols = 1)))
