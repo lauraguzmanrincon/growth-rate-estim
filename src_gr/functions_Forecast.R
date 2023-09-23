@@ -155,6 +155,12 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
   
   if(sum(errorIterations) > 0) warning("Sigma not positive definite for ", sum(errorIterations), " samples out of ", sizeSample)
   
+  # Transform derivatives to GR
+  samplesGR <- getSamplesGR(matrixSampleDays = sampleProjections,
+                            sampleDerivatives = sampleDerivatives,
+                            parametersModel = parametersModel)
+  #?samplesGR <- sampleDerivatives
+  
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
   if(parametersModel$config$derivativeFromGP == F)
     projectionGR_onBoundary <- rep(0, sizeSample) # TODO #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
