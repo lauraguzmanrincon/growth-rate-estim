@@ -497,21 +497,6 @@ getGrowthFromSamples_GP <- function(matrixSampleGP, samplesHyperparam, sigma0, r
   return(t(sampleDerivatives))
 }
 
-#' 22 sep 2023 (for use in plotFittingSamplesGR and in general)
-#' Gives a matrix of dayId x samples of samples of the growth rate
-getSamplesGR <- function(matrixSampleDays, sampleDerivatives, parametersModel){
-  # Transform samples from GP derivative to GR
-  if(parametersModel$params$linkType == "BB"){
-    tempExpGP <- exp(matrixSampleDays)
-    tempLogit <- tempExpGP/(1 + tempExpGP)
-    samplesGR <- sampleDerivatives/(1 + tempLogit)
-  }else if(parametersModel$params$linkType == "NB"){
-    samplesGR <- sampleDerivatives
-  }
-  rownames(samplesGR) <- NULL
-  return(samplesGR)
-}
-
 # Functions for running multiple groups ----
 
 # TODO update functions in this section
@@ -624,6 +609,49 @@ stackOutputMultipleGroups <- function(output, partitionTable){
   #return(list(posteriorGrowth = posteriorGrowth, posteriorTransfGP = posteriorTransfGP,
   #            matrixSampleDays = matrixSampleDays, sampleDerivatives = t(sampleDerivatives)))
   #}
+}
+
+# Functions for sampling ----
+
+#' 22 sep 2023 (for use in plotFittingSamplesGR and in general)
+#' Gives a matrix of dayId x samples of samples of the growth rate
+getSamplesGR <- function(matrixSampleDays, sampleDerivatives, parametersModel){
+  # Transform samples from GP derivative to GR
+  if(parametersModel$params$linkType == "BB"){
+    tempExpGP <- exp(matrixSampleDays)
+    tempLogit <- tempExpGP/(1 + tempExpGP)
+    samplesGR <- sampleDerivatives/(1 + tempLogit)
+  }else if(parametersModel$params$linkType == "NB"){
+    samplesGR <- sampleDerivatives
+  }
+  rownames(samplesGR) <- NULL
+  return(samplesGR)
+}
+
+#' 22 sep 2023
+#' Gives a matrix of dayId x samples of samples of the random effect
+getSamplesRandomEffect <- function(outputModel, parametersModel){
+  if(parametersModel$params$randomEffect == "weekday"){
+    predictionWeekday <- outputModel$dateList$dateTable[order(dayId), weekdays(date)]
+    matrixRandomEffect <- outputModel$matrixSampleRandomEffect[match(predictionWeekday, parametersModel$internal$levelsWeek),]
+  }else if(parametersModel$params$randomEffect == "all"){
+    matrixRandomEffect <- matrix(0, nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample)
+  }else{
+    matrixRandomEffect <- matrix(0, nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample)
+  }
+  return(matrixRandomEffect)
+}
+
+#' 22 sep 2023
+#' Gives a matrix of dayId x samples of samples of the transformed GP + constant
+getSamplesGPConsTrans <- function(outputModel, parametersModel){
+  repSampleIntercept <- matrix(c(outputModel$matrixSampleIntercept), nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample, byrow = T)
+  if(parametersModel$params$linkType %in% c("NB")){
+    matrixGPConsTrans <- exp(outputModel$matrixSampleDays + repSampleIntercept)
+  }else if(parametersModel$params$linkType == "BB"){
+    matrixGPConsTrans <- exp(outputModel$matrixSampleDays + repSampleIntercept)/(1 + exp(outputModel$matrixSampleDays + repSampleIntercept))
+  }
+  return(matrixGPConsTrans)
 }
 
 # Auxiliar post-run ----
@@ -975,5 +1003,35 @@ plotIntercept <- function(outputModel, parametersModel){
     #geom_point(aes(x = samples, y = 0, colour = type)) +
     labs(x = "intercept", y = "density")
   return(p0)
+}
+
+#' Copied from C01Fun.R
+plotHyperparametersGPStackFn <- function(outputModelList, parametersModel, listLabels, listColours){
+  set.seed(159)
+  samplesPrior <- mvtnorm::rmvnorm(100,
+                                   mean = parametersRun$params$theta.prior2.mean,
+                                   sigma = solve(parametersModel$params$theta.prior2.prec))
+  samplesPosteriorList <- vector("list", length(outputModelList))
+  for(iip in 1:length(outputModelList)){
+    samplesPosteriorList[[iip]] <- data.table(sigma = parametersModel$params$prior2.sigma0*exp(outputModelList[[iip]]$matrixSampleHyperAll["theta1",]),
+                                              range = parametersModel$params$prior2.range0*exp(outputModelList[[iip]]$matrixSampleHyperAll["theta2",]),
+                                              type = paste0("posterior ", listLabels[iip]))[,.N,.(sigma, range, type)]
+  }
+  plotHyperparameters <- rbind(do.call("rbind", samplesPosteriorList),
+                               data.table(sigma = parametersModel$params$prior2.sigma0*exp(samplesPrior[,1]),
+                                          range = parametersModel$params$prior2.range0*exp(samplesPrior[,2]),
+                                          N = 1,
+                                          type = "prior"))
+  plotHyperparameters[, typeLevel := factor(type, levels = c("prior", paste0("posterior ", listLabels)))]
+  reviewHyperparameters <- plotHyperparameters[, .(medianSigma = median(sigma), medianRange = median(range)), .(type, typeLevel)]
+  gg <- ggplot(plotHyperparameters, aes(x = sigma, y = range/2, colour = typeLevel, shape = typeLevel)) + theme_laura() +
+    geom_point(data = reviewHyperparameters, aes(x = medianSigma, y = medianRange/2)) + #geom_point(aes(size = N))
+    scale_x_continuous(trans = 'log10') + scale_y_continuous(trans = 'log10') + stat_ellipse(type = "norm", linewidth = 0.5) +
+    scale_colour_manual(name = "", values = c("black", listColours)) +
+    scale_shape_manual(name = "", values = rep(c(16, 17), length(outputModelList))) +
+    theme(legend.title = element_blank(), legend.key = element_blank(), legend.position = c(0.82, 0.07), legend.background = element_rect(fill = NA),
+          legend.key.height = unit(0.1, "cm")) +
+    labs(x = expression(standard~deviation~sigma), y = expression(length~scale~plain(l)~(days)))
+  return(gg)
 }
 

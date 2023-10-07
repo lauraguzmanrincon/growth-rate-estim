@@ -158,7 +158,7 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
   samplesGR <- getSamplesGR(matrixSampleDays = sampleProjections,
                             sampleDerivatives = sampleDerivatives,
                             parametersModel = parametersModel)
-  #?samplesGR <- sampleDerivatives
+  #ERROR1 ?samplesGR <- sampleDerivatives
   
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
   if(parametersModel$config$derivativeFromGP == F){
@@ -203,7 +203,7 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
   etaSample <- matrixIntercept + projectionSamplesGP$projectionGP + matrixRandomEffect
   rhoSample <- matrix(matrixSampleOverdisp, nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = T)
   
-  #?matrixIntercept <- 0
+  #ERROR2 matrixIntercept <- 0
   
   # Create projection table with samples of relevant model parameters
   if(parametersRun$params$linkType == "NB"){
@@ -216,7 +216,7 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                #sample = 1:parametersModel$config$sizeSample, # BUG!!!
                                gp = c(projectionSamplesGP$projectionGP),
                                gr = c(projectionSamplesGP$projectionGR),
-                               gpTrans = c(gpTransSample),
+                               gpConsTrans = c(gpTransSample),
                                eta = c(etaSample),
                                mu = c(mupSample),
                                rho = c(rhoSample))
@@ -235,7 +235,7 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                sample = rep(1:parametersModel$config$sizeSample, each = sizePrediction),
                                gp = c(projectionSamplesGP$projectionGP),
                                gr = c(projectionSamplesGP$projectionGR),
-                               gpTrans = c(gpTransSample),
+                               gpConsTrans = c(gpTransSample),
                                eta = c(etaSample),
                                mu = c(mupSample),
                                rho = c(rhoSample),
@@ -251,10 +251,11 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
   tableSamples[, date := dateLastDay + dayId - lastDayId]
   
   # Add tests to the samples table (relevant for BB)
-  if(parametersRun$params$linkType == "NB")
+  if(parametersRun$params$linkType == "NB"){
     tableSamples[, numberTest := NA]
-  else
+  }else{
     tableSamples[order(dayId), numberTest := testingVector[dayId - lastDayId]]
+  }
   
   # Compute median and 95% CI of model posterior and add it to samples table
   if(parametersRun$params$linkType == "NB"){
@@ -270,9 +271,9 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                        gr_q025 = quantile(gr, 0.025), gr_q25 = quantile(gr, 0.25), gr_median = quantile(gr, 0.5),
                                        gr_q75 = quantile(gr, 0.75), gr_q975 = quantile(gr, 0.975),
                                        #
-                                       gpConsTrans_q025 = quantile(gpTrans, 0.025), gpConsTrans_q25 = quantile(gpTrans, 0.25),
-                                       gpConsTrans_median = quantile(gpTrans, 0.5),
-                                       gpConsTrans_q75 = quantile(gpTrans, 0.75), gpConsTrans_q975 = quantile(gpTrans, 0.975),
+                                       gpConsTrans_q025 = quantile(gpConsTrans, 0.025), gpConsTrans_q25 = quantile(gpConsTrans, 0.25),
+                                       gpConsTrans_median = quantile(gpConsTrans, 0.5),
+                                       gpConsTrans_q75 = quantile(gpConsTrans, 0.75), gpConsTrans_q975 = quantile(gpConsTrans, 0.975),
                                        #
                                        eta_q025 = quantile(eta, 0.025), eta_q25 = quantile(eta, 0.25), eta_median = quantile(eta, 0.5),
                                        eta_q75 = quantile(eta, 0.75), eta_q975 = quantile(eta, 0.975),
@@ -324,10 +325,11 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
 #' Creates projection under null model (future observations are in 95% CI of normal around latest observations/proportion avg and sd = sdPast)
 #' daysForPrediction: days before currentDate defined as 'latest observations'/'tests'
 #' TODO caveat: quantiles from samples could be calculated with the qnorm function instead of using tableSample, but it's more practical to provide samples
-createTableProjectionNull <- function(outputModel = outputModel, parametersModel = parametersRun, currentDate = currentDate,
+createTableProjectionNull <- function(outputModel, parametersModel, currentDate,
                                       sizePrediction, daysForPrediction = 7, testingVector = NULL){
   # Check input
   if(parametersModel$params$linkType == "BB" & is.null(testingVector)) stop("testingVector is required for the proportions model")
+  if(is.null(testingVector)) testingVector <- rep(NA, sizePrediction)
   
   currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
   casesBeforePrediction <- outputModel$dataForModel[date > currentDate - daysForPrediction & date <= currentDate][order(date), positiveResults]
@@ -374,6 +376,10 @@ createTableProjectionNull <- function(outputModel = outputModel, parametersModel
                         yS_q975 = testingVector*pmax(0, pmin(1, qnorm(0.975, mean = proportionsLastDay, sd = sdPast))))]
   }
   
+  # Copy y into gpConsTrans for visualisation purposes
+  overviewNull[, ":="(gpConsTrans_median = yS_median, gpConsTrans_q025 = yS_q025, gpConsTrans_q975 = yS_q975,
+                     gpConsTrans_q25 = yS_q25, gpConsTrans_q75 = yS_q75)]
+  
   # Table samples output - artificial samples that can be useful when using scoring functions (see caveat in description)
   # Number of samples = parametersModel$config$sizeSample
   tableSamples <- CJ(dayId = currentDayId + 1:sizePrediction, sample = 1:parametersModel$config$sizeSample)
@@ -382,10 +388,12 @@ createTableProjectionNull <- function(outputModel = outputModel, parametersModel
   tableSamples[overviewNull, ":="(lastDayId = lastDayId, date = date, dateLastDay = dateLastDay, numberTest = numberTest)]
   
   # Produce samples
-  if(parametersModel$params$linkType == "NB")
-    tableSamples[, yS := rnorm(n = parametersModel$config$sizeSample, mean = proportionsLastDay, sd = sdPast)]
-  else
-    tableSamples[, yS := numberTest*pmax(0, pmin(1, rnorm(n = parametersModel$config$sizeSample, mean = proportionsLastDay, sd = sdPast)))]
+  if(parametersModel$params$linkType == "NB"){
+    # TODO this might produce a warning if casesBeforePrediction are unknown
+    tableSamples[, yS := rnorm(n = sizePrediction*parametersModel$config$sizeSample, mean = positiveResultsLastDay, sd = sdPast)]
+  }else{
+    tableSamples[, yS := numberTest*pmax(0, pmin(1, rnorm(n = sizePrediction*parametersModel$config$sizeSample, mean = proportionsLastDay, sd = sdPast)))]
+  }
   
   return(list(tableProjections = overviewNull, tableSamples = tableSamples,
               currentDate = currentDate, sizePrediction = sizePrediction, nameProjection = "null"))
@@ -453,6 +461,7 @@ plotProjection <- function(listProjection, outputModel, parametersModel, futureT
     labs(x = "day", y = "posterior fitting", title = listProjection$nameProjection)
   ggP2 <- ggplot(dataToPlotBeforeGR, aes(x = date)) + theme_laura() +
     #geom_vline(xintercept = lockdownDates, linetype = 2, colour = "gray50") +
+    geom_hline(yintercept = 0, linetype = 2, colour = "gray50") +
     geom_ribbon(aes(ymin = q0.025, ymax = q0.975), fill = "gray70", alpha = 0.5) +
     geom_ribbon(aes(ymin = q0.25, ymax = q0.75), fill = "gray40", alpha = 0.5) +
     geom_line(aes(y = median)) +
