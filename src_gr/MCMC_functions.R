@@ -55,7 +55,8 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   # ---------------------------------------------------- #
   
   # Load executable Stan model
-  constructStanExec(linkType = parametersModel$param$linkType)
+  dirSource <- "/Users/lauraguzmanrincon/Documents/GitHub/growth-rate-estim/src_gr" # TODO how to do in package?
+  constructStanExec(linkType = parametersModel$param$linkType, dirSource = dirSource)
   if(parametersModel$param$linkType == "BB")
     modelExec <- modelExec_BB
   else
@@ -168,13 +169,14 @@ processSTANOutput <- function(modelFit, parametersModel, saveSamples = F){
 }
 
 #' Creates and stores executable in global environment
-constructStanExec <- function(linkType){
+#' TODO how to do in package?
+constructStanExec <- function(linkType, dirSource){
   if(linkType == "BB"){
     if(!exists("modelExec_BB", envir = .GlobalEnv)){
       cat("Creating executable...\n")
       
       # Translate Stan Code to C++ with stanc
-      modelStanc <- stanc(file="src/Stan_fit_BB.stan")
+      modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_BB.stan"))
       
       # Make an Executable Stan Model with stan model
       modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
@@ -185,7 +187,7 @@ constructStanExec <- function(linkType){
       cat("Creating executable...\n")
       
       # Translate Stan Code to C++ with stanc
-      modelStanc <- stanc(file="src/Stan_fit_NB.stan")
+      modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_NB.stan"))
       
       # Make an Executable Stan Model with stan model
       modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
