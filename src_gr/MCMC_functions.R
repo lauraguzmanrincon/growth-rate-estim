@@ -48,6 +48,14 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   dataForModel[numberTest == 0, ":="(numberTest = NA, positiveResults = NA)]
   dataForModel[, dayWeek := weekdays(date)]
   
+  if(parametersModel$param$linkType == "BB"){
+    # TODO what if NA in numberTest for BB???
+    dataForModelNoNa <- dataForModel[!is.na(positiveResults) & !is.na(numberTest)]
+  }else{
+    dataForModelNoNa <- dataForModel[!is.na(positiveResults)]
+    dataForModelNoNa[, numberTest := 0]
+  }
+  
   # ---------------------------------------------------- #
   
   # ---------------------------------------------------- #
@@ -57,21 +65,24 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   # Load executable Stan model
   dirSource <- "/Users/lauraguzmanrincon/Documents/GitHub/growth-rate-estim/src_gr" # TODO how to do in package?
   constructStanExec(linkType = parametersModel$param$linkType, dirSource = dirSource)
-  if(parametersModel$param$linkType == "BB")
+  if(parametersModel$param$linkType == "BB"){
     modelExec <- modelExec_BB
-  else
+  }
+  else{
     modelExec <- modelExec_NB
+  }
   
   # Data to Stan
+  # We assume dayId runs from 1 in steps of unitTime
   modelData <- list(
     # dimensions
-    num_days = as.integer(numDays),
+    num_days = nrow(dataForModelNoNa), #as.integer(numDays),
     num_groups = as.integer(7),
     # data
-    t = 1:numDays,
-    pos = dataForModel[dayId >= minDay & dayId <= maxDay][order(dayId), positiveResults],
-    tot = dataForModel[dayId >= minDay & dayId <= maxDay][order(dayId), as.integer(numberTest)],
-    day_to_group = as.integer(dataForModel[dayId >= minDay & dayId <= maxDay][order(dayId), factor(dayWeek, levels = levelsWeek)]),
+    t = dataForModelNoNa[order(dayId), dayId], #1:numDays,
+    pos = dataForModelNoNa[order(dayId), positiveResults],
+    tot = dataForModelNoNa[order(dayId), as.integer(numberTest)],
+    day_to_group = as.integer(dataForModelNoNa[order(dayId), factor(dayWeek, levels = levelsWeek)]),
     # prior dispersion
     m_eta = parametersModel$params$NB.prior.rho$size$param[1], # NB
     sig_eta = 1/sqrt(parametersModel$params$NB.prior.rho$size$param[2]), # NB
@@ -123,7 +134,7 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   
   cat("Saving modelFit, modelStanc, modelData, parametersStan in ", parametersStan$sampleFile, ".RData\n", sep = "")
   modelStanc <- modelExec@model_code
-  save(modelFit, modelStanc, modelData, parametersStan, file = paste0(parametersStan$sampleFile, ".RData"))
+  #save(modelFit, modelStanc, modelData, parametersStan, file = paste0(parametersStan$sampleFile, ".RData"))
   
   return(modelFit)
 }
