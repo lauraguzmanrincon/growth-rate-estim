@@ -18,7 +18,7 @@
 #' TODO minDate, maxDate lost. FIX dateTable!
 #' TODO using minDayInla and maxDayInla from outside!
 runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL, maxDate = NULL,
-                               parametersStan = list(sampleFile = "MCMC_samples", chains = 1, iter = 10000, warmup = floor(iter/2), thin = 1)){
+                               parametersStan = list(sampleFile = "MCMC_samples", chains = 1, iter = 10000, warmup = 5000, thin = 1)){
   # Load parameters into function environment and add auxiliar variables
   list2env(parametersModel$params, envir = environment())
   list2env(parametersModel$config, envir = environment())
@@ -28,17 +28,18 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   if(is.null(minDate)) minDate <- min(countTable$date)
   if(is.null(maxDate)) maxDate <- max(countTable$date)
   minDay <- 1
-  maxDay <- as.integer(maxDate - minDate + 1)
-  numDays <- maxDay - minDay + 1
+  maxDay <- length(seq.Date(from = minDate, to = maxDate, by = parametersModel$params$unitTime)) #as.integer(maxDate - minDate + 1)
+  numDays <- maxDay #maxDay - minDay + 1
   dateTable <- data.table(dayId = minDay:maxDay,
-                          date = seq.Date(from = minDate, to = maxDate, by = "day"))
+                          date = seq.Date(from = minDate, to = maxDate, by = parametersModel$params$unitTime))
+  if(nrow(dateTable) <= 1) stop("There must be at least 2 time units between minDate and maxDate")
   
   # ---------------------------------------------------- #
   #                      FIT MODEL                       #
   # ---------------------------------------------------- #
   # Create data with all days, including the ones with missing data
   dataForModel <- data.table(dayId = minDay:maxDay,
-                             date = seq.Date(from = min(countTable$date), to = max(countTable$date), by = "day"),
+                             date = seq.Date(from = minDate, to = maxDate, by = parametersModel$params$unitTime),
                              numberTest = as.integer(NA),
                              positiveResults = as.integer(NA))
   setkey(dataForModel, date)
@@ -91,7 +92,7 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
                                                                                        mean = log(c(parametersModel$params$prior2.range0, parametersModel$params$prior2.sigma0)) +
                                                                                          parametersModel$params$theta.prior2.mean,
                                                                                        sigma = solve(parametersModel$params$theta.prior2.prec))[1,],
-                                                        w_d = rep(0, length(levelsWeek)),
+                                                        w_d = rep(0, length(parametersModel$internal$levelsWeek)),
                                                         tau_w = rgamma(1, shape = modelData$a_w, rate = modelData$b_w)), simplify = F)
   }else if(parametersModel$param$linkType == "BB"){
     logit <- function(p) log(p/(1 - p))
