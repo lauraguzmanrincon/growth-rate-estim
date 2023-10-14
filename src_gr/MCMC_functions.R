@@ -181,6 +181,7 @@ processSTANOutput <- function(modelFit, parametersModel, saveSamples = F){
 
 #' Creates and stores executable in global environment
 #' TODO how to do in package?
+#' TODO do it before running? Annoying error when using Github desktop
 constructStanExec <- function(linkType, dirSource){
   if(linkType == "BB"){
     if(!exists("modelExec_BB", envir = .GlobalEnv)){
