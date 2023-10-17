@@ -237,7 +237,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   }
   matrixSampleEta <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
   if(parametersModel$params$hasConstant){
-    matrixSampleIntercept <- 2*sapply(sampleList, function(x) x$latent[set5,1]) # TODO why x2?
+    matrixSampleIntercept <- (1 + (parametersRunSub$params$randomEffect != "none"))*sapply(sampleList, function(x) x$latent[set5,1]) # TODO why x2?
   }else{
     matrixSampleIntercept <- rep(0, parametersModel$config$sizeSample)
   }
