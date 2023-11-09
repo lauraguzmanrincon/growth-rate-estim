@@ -488,7 +488,7 @@ getGrowthFromSamples_GP <- function(matrixSampleGP, samplesHyperparam, sigma0, r
     
     # Draw samples
     meanMVN <- KXpX%*%invDeltaMatrix%*%fVector
-    iSample <- MASS::mvrnorm(n = 1, mu = KXpX%*%invDeltaMatrix%*%fVector, Sigma = KXpXp - KXpX%*%invDeltaMatrix%*%t(KXpX))
+    iSample <- MASS::mvrnorm(n = 1, mu = meanMVN, Sigma = KXpXp - KXpX%*%invDeltaMatrix%*%t(KXpX))
     #iSample <- sapply(1:numDays, function(x) rnorm(n = 1, mean = meanMVN[x], sd = sqrt( KXpXp[x] - KXpX[x,]%*%invDeltaMatrix%*%KXpX[x,] )))
     
     # Store
@@ -565,6 +565,8 @@ stackOutputMultipleGroups <- function(output, partitionTable){
                                           #q0.25_transGP = i.q0.25_transGP, q0.75_transGP = i.q0.75_transGP,
                                           median_transConsGP = i.median_transConsGP, q0.025_transConsGP = i.q0.025_transConsGP, q0.975_transConsGP = i.q0.975_transConsGP,
                                           q0.25_transConsGP = i.q0.25_transConsGP, q0.75_transConsGP = i.q0.75_transConsGP,
+                                          medianFT = i.medianFT, q0.025FT = i.q0.025FT, q0.975FT = i.q0.975FT,
+                                          q0.25FT = i.q0.25FT, q0.75FT = i.q0.75FT,
                                           positiveResults = i.positiveResults)]
   
   setkey(posteriorGrowth, idPartition)
@@ -705,7 +707,7 @@ plotFitting <- function(outputModel, parametersModel){
                       dataToPlotPosterior[, .(dayId, date, weekendLabel, ratio = NA, positiveResults = NA,
                                               median = median_transConsGP, q0.025 = q0.025_transConsGP, q0.975 = q0.975_transConsGP, type = "Gaussian process")])
   dataToPlot[, typeLevel := factor(type, levels = c("model fit", "Gaussian process"))]
-  p01 <- ggplot(dataToPlot, aes(x = date)) + theme_laura() +
+  p01 <- ggplot(dataToPlot[order(date)], aes(x = date)) + theme_laura() +
     geom_ribbon(data = dataToPlot[typeLevel != "points"], aes(ymin = q0.025, ymax = q0.975, fill = typeLevel), alpha = 0.5) +
     geom_line(data = dataToPlot[typeLevel != "points"], aes(y = median, colour = typeLevel, linetype = typeLevel)) +
     scale_colour_manual(name = "posterior (median, 95% CI)", values = colourFit) +
