@@ -413,11 +413,11 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
                          prob = matrixP),
                   nrow = numDays, ncol = sizeSample, byrow = F)/matrixTests
   }
-  posteriorTransfGP[order(dayId), ":="(medianFT = apply(samplesFit, 1, quantile, 0.5),
-                                       q0.975FT = apply(samplesFit, 1, quantile, 0.975),
-                                       q0.025FT = apply(samplesFit, 1, quantile, 0.025),
-                                       q0.75FT = apply(samplesFit, 1, quantile, 0.75),
-                                       q0.25FT = apply(samplesFit, 1, quantile, 0.25))]
+  posteriorTransfGP[order(dayId), ":="(medianFT = apply(samplesFit, 1, quantile, 0.5, na.rm = T),
+                                       q0.975FT = apply(samplesFit, 1, quantile, 0.975, na.rm = T),
+                                       q0.025FT = apply(samplesFit, 1, quantile, 0.025, na.rm = T),
+                                       q0.75FT = apply(samplesFit, 1, quantile, 0.75, na.rm = T),
+                                       q0.25FT = apply(samplesFit, 1, quantile, 0.25, na.rm = T))]
   
   # ---------------------------------------------------- #
   #                 POSTERIOR DAY EFFECT                 #
