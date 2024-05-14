@@ -17,7 +17,7 @@
 #' runModelGrowthRate_STAN saves this in [parametersStan$sampleFile].RData: modelFit, modelStanc, modelData, parametersStan
 #' TODO minDate, maxDate lost. FIX dateTable!
 #' TODO using minDayInla and maxDayInla from outside!
-runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL, maxDate = NULL,
+runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL, maxDate = NULL, seed = sample(1000, 1),
                                parametersStan = list(sampleFile = "MCMC_samples", chains = 1, iter = 10000, warmup = 5000, thin = 1)){
   # Load parameters into function environment and add auxiliar variables
   list2env(parametersModel$params, envir = environment())
@@ -96,7 +96,7 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
     B = solve(parametersModel$params$theta.prior2.prec))
   
   # Initial values
-  set.seed(9812)
+  set.seed(seed)
   if(parametersModel$param$linkType == "NB"){
     modelInits <- replicate(parametersStan$chains, list(eta = exp(rnorm(n = 1, mean = modelData$m_eta, sd = modelData$sig_eta)),
                                                         x_t = log(modelData$pos),
