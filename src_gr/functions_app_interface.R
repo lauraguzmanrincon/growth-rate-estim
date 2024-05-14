@@ -312,6 +312,19 @@ panel_load2_main <- function(){
     )
 }
 
+panel_review_heading <- function(){
+  # TODO done for poster
+  titlePanel(title = div(h3('Review your results',
+                            style = "padding-left: 15px; color: #000000; font-size: 25px; weigth:bold"),
+                         h4(HTML(paste("Below you can review the output",
+                                       "of the model applied to your data.",
+                                       "Explore the nowcasts and forecasts.",
+                                       sep = "<br/>")),
+                            style = "padding-left: 15px; padding-bottom: 15px; color: #797979; font-size: 15px; weigth:bold")),
+             #title = "Load your dataset (step 1)",
+             windowTitle = "Review your results")
+}
+
 # ----
 debug_message <- function(title = "", message = "", error = ""){
   showModal(modalDialog(

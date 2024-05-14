@@ -76,8 +76,8 @@ createNewModel <- function(){
 
 createNewProject <- function(){
   project <- list(code = paste0("proj", sample(x = 1:9000, size = 1) + 999),
-                     name = "New project",
-                     creationDate = Sys.Date(),
-                     date = createNewData(),
-                     model = createNewModel())
+                  name = "New project",
+                  creationDate = Sys.Date(),
+                  date = createNewData(),
+                  model = createNewModel())
 }
