@@ -204,7 +204,7 @@ runModelGrowthRate <- function(countTable, parametersModel, minDate = NULL, maxD
   }
   
   objectInla$dateList <- list(dateTable = dateTable, numDays = numDays, minDay = minDay, maxDay = maxDay)
-  objectInla$dataForModel <- dataForModel
+  objectInla$dataForModel <- dataForModel # from minDays to maxDays
   objectInla$nonBoundaryIndices <- nonBoundaryIndices # TODO better way?
   return(objectInla)
 }
@@ -235,9 +235,9 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   }else{
     matrixSampleRandomEffect <- NULL
   }
-  matrixSampleEta <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
+  matrixSampleNu <- sapply(sampleList, function(x) x$latent[set1[1:objectInla$dateList$numDays],1])
   if(parametersModel$params$hasConstant){
-    matrixSampleIntercept <- (1 + (parametersRunSub$params$randomEffect != "none"))*sapply(sampleList, function(x) x$latent[set5,1]) # TODO why x2?
+    matrixSampleIntercept <- (1 + (parametersModel$params$randomEffect != "none"))*sapply(sampleList, function(x) x$latent[set5,1]) # TODO why x2?
   }else{
     matrixSampleIntercept <- rep(0, parametersModel$config$sizeSample)
   }
@@ -269,11 +269,14 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
     sampleDerivatives <- getGrowthFromSamples(matrixSampleDays = matrixSampleDays)
   }
   
+  vectorTestData <- objectInla$dataForModel[order(dayId), numberTest] # 27.11.2023
+  
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
   listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll,
-                                      matrixSampleEta, matrixSampleRandomEffect, matrixSampleIntercept, objectInla, parametersModel)
+                                      matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
+                                      vectorTestData, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
   setkey(objectInla$dateList$dateTable, dayId)
@@ -316,11 +319,17 @@ getGrowthFromSamples <- function(matrixSampleDays){
   return(sampleDerivatives)
 }
 
-# INTERNAL
-# TODO objectInla should not be arg? should be undo into dataForModel as arg only and objectInla optional?
+#' INTERNAL
+#' TODO objectInla should not be arg? should be undo into dataForModel as arg only and objectInla optional?
+#' matrixSampleDays, sampleDerivatives, matrixSampleNu: matrix [dayId x samples]
+#' matrixSampleHyper: matrix [c("theta1", "theta2", "overdispersion", "precision") x samples]
+#' matrixSampleRandomEffect: matrix [dayId OR dayWeek OR other x samples]
+#' matrixSampleIntercept: vector [samples]
+#' matrixTestData: vector [dayId]
+#' parametersModel
 computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleHyper,
-                              matrixSampleEta, matrixSampleRandomEffect, matrixSampleIntercept,
-                              objectInla, parametersModel,
+                              matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
+                              matrixTestData, parametersModel,
                               ifINLAMarginal = FALSE){
   numDays <- nrow(matrixSampleDays)
   
@@ -351,6 +360,7 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   cat("Computing posterior of incidence... ")
   if(ifINLAMarginal & !parametersModel$params$hasConstant){
     # (this version is slow and applies only to INLA)
+    # depurar?
     samplesGP <- objectInla$marginals.random$day[objectInla$nonBoundaryIndices]
     if(parametersModel$params$linkType %in% c("NB")){
       transformedSamples <- lapply(samplesGP, function(x) inla.tmarginal(exp, x))
@@ -395,19 +405,17 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   if(parametersModel$params$linkType == "NB"){
     samplesFit <- matrix(rnbinom(n = matrix(1, nrow = numDays, ncol = sizeSample),
                                 size = matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T),
-                                mu = exp(matrixSampleEta)),
+                                mu = exp(matrixSampleNu)),
                         nrow = numDays, ncol = sizeSample, byrow = F)
   }else{
-    testData <- objectInla$dataForModel[order(dayId), numberTest]
-    
     matrixSampleOverdisp <- matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T)
-    samplesMu <- exp(matrixSampleEta)/(1 + exp(matrixSampleEta))
+    samplesMu <- exp(matrixSampleNu)/(1 + exp(matrixSampleNu))
     matrixAlpha <- samplesMu*(1 - matrixSampleOverdisp)/matrixSampleOverdisp
     matrixBeta <- (1 - samplesMu)*(1 - matrixSampleOverdisp)/matrixSampleOverdisp
     
     matrixP <- matrix(rbeta(matrix(1, nrow = numDays, ncol = sizeSample), shape1 = matrixAlpha, shape2 = matrixBeta),
                       nrow = numDays, ncol = sizeSample, byrow = F)
-    matrixTests <- matrix(testData, nrow = numDays, ncol = sizeSample, byrow = F)
+    matrixTests <- matrix(matrixTestData, nrow = numDays, ncol = sizeSample, byrow = F)
     samplesFit <- matrix(rbinom(n = matrix(1, nrow = numDays, ncol = sizeSample),
                          size = matrixTests,
                          prob = matrixP),
@@ -635,6 +643,7 @@ getSamplesRandomEffect <- function(outputModel, parametersModel){
     predictionWeekday <- outputModel$dateList$dateTable[order(dayId), weekdays(date)]
     matrixRandomEffect <- outputModel$matrixSampleRandomEffect[match(predictionWeekday, parametersModel$internal$levelsWeek),]
   }else if(parametersModel$params$randomEffect == "all"){
+    # TODO
     matrixRandomEffect <- matrix(0, nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample)
   }else{
     matrixRandomEffect <- matrix(0, nrow = outputModel$dateList$numDays, ncol = parametersModel$config$sizeSample)

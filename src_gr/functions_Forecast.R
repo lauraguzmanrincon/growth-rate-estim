@@ -1,5 +1,8 @@
 # From W01.R
 
+# TODO write function to create empty projection object (to compare other non-GP models)
+# OR create simpler object that accommodates all types of projections (non-GP ones)
+
 # Definition
 # currentDate: last day of observations (<= maxDate in model)
 # sizePredicition: days into the future
@@ -410,6 +413,7 @@ createTableProjectionNull <- function(outputModel, parametersModel, currentDate,
 plotProjection <- function(listProjection, outputModel, parametersModel, futureTable = NULL, minDate = NULL, plotGP = F){
   # TODO make better plot
   if(is.null(minDate)) minDate <- listProjection$currentDate - 30
+  sizePrediction <- listProjection$sizePrediction
   maxDate <- listProjection$currentDate + sizePrediction
   
   # Create auxiliar tables
@@ -419,7 +423,6 @@ plotProjection <- function(listProjection, outputModel, parametersModel, futureT
   
   currentDate <- listProjection$currentDate
   currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
-  sizePrediction <- listProjection$sizePrediction
   
   dataToPlotBeforeGP <- outputModel$posteriorTransfGP[date >= minDate & date <= maxDate] #[dayId %in% (currentDayId - (0:30))]
   dataToPlotBeforeGR <- outputModel$posteriorGrowth[date >= minDate & date <= maxDate] #[dayId %in% (currentDayId - (0:30))]
@@ -446,9 +449,9 @@ plotProjection <- function(listProjection, outputModel, parametersModel, futureT
   ggP1 <- ggplot(dataToPlotBeforeGP, aes(x = date)) + theme_laura() +
     #geom_vline(xintercept = lockdownDates, linetype = 2, colour = "gray50") +
     #geom_line(data = allPosterior[order(sample, date)], aes(y = value, group = sample))
-    geom_ribbon(aes(ymin = q0.025FT, ymax = q0.975FT), fill = "gray70", alpha = 0.5) +
-    geom_ribbon(aes(ymin = q0.25FT, ymax = q0.75FT), fill = "gray40", alpha = 0.5) +
-    geom_line(aes(y = medianFT)) +
+    ###geom_ribbon(aes(ymin = q0.025FT, ymax = q0.975FT), fill = "gray70", alpha = 0.5) +
+    ###geom_ribbon(aes(ymin = q0.25FT, ymax = q0.75FT), fill = "gray40", alpha = 0.5) +
+    ###geom_line(aes(y = medianFT)) +
     geom_ribbon(data = dataToPlotAfter, aes(x = date, ymin = yTrans_q025, ymax = yTrans_q975), fill = "#A8D0DB", alpha = 0.5) +
     geom_ribbon(data = dataToPlotAfter, aes(ymin = yTrans_q25, ymax = yTrans_q75), fill = "#0C7489", alpha = 0.5) +
     geom_line(data = dataToPlotAfter, aes(y = yTrans_median), colour = "#13505B") +
