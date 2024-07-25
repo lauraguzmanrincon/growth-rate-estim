@@ -139,6 +139,11 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
     # Draw samples
     meanMVN <- KPredObs%*%invDeltaMatrix%*%fVector
     sigmaMVN <- KPredPred - KPredObs%*%invDeltaMatrix%*%t(KPredObs)
+    ###
+    print(sigmaMVN)
+    iSampleGP <- MASS::mvrnorm(n = 1, mu = meanMVN[1:sizePrediction], Sigma = sigmaMVN[1:sizePrediction,1:sizePrediction])
+    iSampleGR <- MASS::mvrnorm(n = 1, mu = meanMVN[(sizePrediction + 1):(2*sizePrediction)],
+                               Sigma = sigmaMVN[(sizePrediction + 1):(2*sizePrediction),(sizePrediction + 1):(2*sizePrediction)])
     tryCatch({
       #iSample <- MASS::mvrnorm(n = 1, mu = meanMVN, Sigma = sigmaMVN + 0.1*diag(2*sizePrediction))
       iSampleGP <- MASS::mvrnorm(n = 1, mu = meanMVN[1:sizePrediction], Sigma = sigmaMVN[1:sizePrediction,1:sizePrediction])
@@ -146,6 +151,7 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
                                  Sigma = sigmaMVN[(sizePrediction + 1):(2*sizePrediction),(sizePrediction + 1):(2*sizePrediction)])
     }, error = function(e) {
       errorIterations[indexSample] <- 1
+      print(indexSample)
       iSample <- rep(NA, 2*sizePrediction)
     })
     

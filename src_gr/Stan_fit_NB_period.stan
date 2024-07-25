@@ -31,12 +31,16 @@ transformed data {
 }
 
 parameters {
+  // Intercept
+  real intercept;
+
   // Dispersion
   real<lower=0> eta;
 
   // GP
   vector[num_days] x_t;
   vector[2] log_theta_x; // [range, sigma]
+  real<lower=0> p;
 
   // Day-of-the-week effect
   vector[num_groups - 1] wraw_d; // vector[num_groups] w_d;
@@ -53,6 +57,9 @@ transformed parameters {
 }
 
 model{
+  // Intercept
+  intercept ~ normal(0, 1); // NEW
+
   // Dispersion
   eta ~ lognormal(m_eta, sig_eta);
 
@@ -64,21 +71,24 @@ model{
   matrix[num_days, num_days] L_K;
   matrix[num_days, num_days] K;
   for (i in 1:(num_days - 1)) {
-    K[i, i] = sig2_x + 0.0001;
+    //K[i, i] = sig2_x + 0.0001;
+    K[i, i] = sig2_x + 0.1 + 0.001; // NEW if periodic
     for (j in (i + 1):num_days) {
-      //K[i, j] = sig2_x*(1 + sqrt(12)*abs(t[i] - t[j])/range_x)*exp(-sqrt(12)*abs(t[i] - t[j])/range_x); // Matern 32 + periodic
+      K[i, j] = sig2_x*(1 + sqrt(12)*abs(t[i] - t[j])/range_x)*exp(-sqrt(12)*abs(t[i] - t[j])/range_x) + 0.1*exp(- abs(t[i] - t[j])^2/(2*60^2) - 2*sin(pi()*abs(t[i] - t[j])/p)^2); // NEW if periodic (l=1,sig=1)
       //K[i, j] = sig2_x*(1 + sqrt(20)*abs(t[i] - t[j])/range_x + 20*(t[i] - t[j])^2/(3*range_x^2))*exp(-sqrt(20)*abs(t[i] - t[j])/range_x); // Matern 52
       //K[i, j] = sig2_x*(1 + sqrt(12)*abs(t[i] - t[j])/range_x)*exp(-sqrt(12)*abs(t[i] - t[j])/range_x); // Matern 32 *** favourite
-      K[i, j] = sig2_x*exp(-2*abs(t[i] - t[j])/range_x); // Matern 12
+      //K[i, j] = sig2_x*exp(-2*abs(t[i] - t[j])/range_x); // Matern 12
       //K[i, j] = sig2_x*exp(-2*(t[i] - t[j])^2/range_x^2); // SE
       K[j, i] = K[i, j];
     }
   }
-  K[num_days, num_days] = sig2_x + 0.0001;
+  //K[num_days, num_days] = sig2_x + 0.0001;
+  K[num_days, num_days] = sig2_x + 0.1 + 0.001; // NEW if periodic
   L_K = cholesky_decompose(K);
 
   vector[num_days] mu_x = rep_vector(0, num_days);
   log_theta_x ~ multi_normal(log_theta_0, B);
+  p ~ lognormal(4, 0.5); // NEW if periodic
   x_t ~ multi_normal_cholesky(mu_x, L_K);
 
   // Observations

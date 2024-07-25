@@ -140,7 +140,8 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   modelStanc <- modelExec@model_code
   objectStan <- list(modelFit = modelFit,
                      modelStanc = modelStanc,
-                     dataForModel = dataForModel)
+                     dataForModel = dataForModel,
+                     dateTable = dateTable) # TODO right?
   
   cat("Saving modelFit, modelStanc, modelData, parametersStan in ", parametersStan$sampleFile, ".RData\n", sep = "")
   #save(modelFit, modelStanc, dataForModel, parametersStan, file = paste0(parametersStan$sampleFile, ".RData")) # 30.11.2023
@@ -168,6 +169,19 @@ processSTANOutput <- function(objectStan, parametersModel, saveSamples = F){
   #matrixSampleIntercept vector [samples]
   #matrixSampleNu
   #vectorTestData
+  # TODO all these in a rush:
+  matrixSampleRandomEffect <- t(samplesFit$w_d)
+  matrixSampleHyperAll <- rbind(exp(samplesFit$log_theta_x[,1]),
+                                exp(samplesFit$log_theta_x[,2]), # TODO we arent storing the other hyperparam for now
+                                samplesFit$eta,
+                                samplesFit$tau_w)
+  rownames(matrixSampleHyperAll) <- c("theta1", "theta2", "overdispersion", "precision")
+  matrixSampleIntercept <- samplesFit$intercept # TODO still doesnt work for BB...
+  ## TODO intercept not well done yet
+  ## TODO check dayofweek
+  orderDayWeek <- as.integer(objectStan$dataForModel[order(dayId), sapply(dayWeek, function(dw) which(dw == c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")))])
+  matrixSampleNu <- t(c(matrixSampleIntercept) + t(matrixSampleDays) + t(matrixSampleRandomEffect)[,orderDayWeek])
+  vectorTestData <- objectStan$dataForModel[order(dayId), numberTest]
   
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
@@ -177,15 +191,15 @@ processSTANOutput <- function(objectStan, parametersModel, saveSamples = F){
                                       vectorTestData, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
-  setkey(dateTable, dayId)
-  listPosteriors$posteriorGrowth[dateTable, ":="(date = i.date)]
+  setkey(objectStan$dateTable, dayId) # TODO right?
+  listPosteriors$posteriorGrowth[objectStan$dateTable, ":="(date = i.date)]
   
   setkey(listPosteriors$posteriorTransfGP, dayId)
-  setkey(dateTable, dayId)
-  listPosteriors$posteriorTransfGP[dateTable, ":="(date = i.date)]
+  setkey(objectStan$dateTable, dayId) # TODO right?
+  listPosteriors$posteriorTransfGP[objectStan$dateTable, ":="(date = i.date)]
   setkey(listPosteriors$posteriorTransfGP, date)
-  setkey(countTable, date)
-  listPosteriors$posteriorTransfGP[countTable, ":="(positiveResults = i.positiveResults)]
+  setkey(objectStan$countTable, date) # TODO right?
+  listPosteriors$posteriorTransfGP[objectStan$countTable, ":="(positiveResults = i.positiveResults)]
   
   if(saveSamples == F){
     return(list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP))
@@ -216,7 +230,7 @@ constructStanExec <- function(linkType, dirSource){
       cat("Creating executable...\n")
       
       # Translate Stan Code to C++ with stanc
-      modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_NB.stan"))
+      modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_NB_period.stan"))
       
       # Make an Executable Stan Model with stan model
       modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
