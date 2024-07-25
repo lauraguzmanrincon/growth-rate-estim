@@ -10,6 +10,8 @@
 #' minDate (optional): minimum date to include in the model
 #' maxDate (optional): maximum date to include in the model
 #' 
+#' Output: dataForModel: this data includes all days in range. Recall STAN does not recieve the ones without positives and tests
+#' 
 #' Example:
 #' parametersStan <- list(sampleFile = "R_storage/R47_Output/Test", chains = 1, iter = 10, warmup = 2, thin = 1)
 #' modelFit <- runModelGrowthRate_STAN(countTable, parametersRun, minDate = NULL, maxDate = NULL, parametersStan = parametersStan)
@@ -50,9 +52,11 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   
   if(parametersModel$param$linkType == "BB"){
     # TODO what if NA in numberTest for BB???
-    dataForModelNoNa <- dataForModel[!is.na(positiveResults) & !is.na(numberTest)]
+    dataForModel[, includedInStan := !is.na(positiveResults) & !is.na(numberTest)]
+    dataForModelNoNa <- dataForModel[includedInStan == T]
   }else{
-    dataForModelNoNa <- dataForModel[!is.na(positiveResults)]
+    dataForModel[, includedInStan := !is.na(positiveResults)]
+    dataForModelNoNa <- dataForModel[includedInStan == T]
     dataForModelNoNa[, numberTest := 0]
   }
   
@@ -132,21 +136,26 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
                        sample_file = parametersStan$sampleFile)
   # TODO what does STAN do with NA values?
   
-  cat("Saving modelFit, modelStanc, modelData, parametersStan in ", parametersStan$sampleFile, ".RData\n", sep = "")
+  # Create output
   modelStanc <- modelExec@model_code
-  #save(modelFit, modelStanc, modelData, parametersStan, file = paste0(parametersStan$sampleFile, ".RData"))
+  objectStan <- list(modelFit = modelFit,
+                     modelStanc = modelStanc,
+                     dataForModel = dataForModel)
   
-  return(modelFit)
+  cat("Saving modelFit, modelStanc, modelData, parametersStan in ", parametersStan$sampleFile, ".RData\n", sep = "")
+  #save(modelFit, modelStanc, dataForModel, parametersStan, file = paste0(parametersStan$sampleFile, ".RData")) # 30.11.2023
+  
+  return(objectStan)
 }
 
-processSTANOutput <- function(modelFit, parametersModel, saveSamples = F){
+processSTANOutput <- function(objectStan, parametersModel, saveSamples = F){
   # ---------------------------------------------------- #
   #                      GET SAMPLES                     #
   # ---------------------------------------------------- #
   
   # Samples GP
-  outputFit <- data.table(summary(modelFit)$summary, keep.rownames = T)
-  samplesFit <- extract(modelFit)
+  outputFit <- data.table(summary(objectStan$modelFit)$summary, keep.rownames = T)
+  samplesFit <- extract(objectStan$modelFit)
   matrixSampleDays <- t(samplesFit$x_t)
   
   # Samples derivative
@@ -154,11 +163,18 @@ processSTANOutput <- function(modelFit, parametersModel, saveSamples = F){
   
   # Samples parameters
   # TODO
+  #matrixSampleRandomEffect matrix [ x samples]
+  #matrixSampleHyperAll matrix [c("theta1", "theta2", "overdispersion", "precision") x samples]
+  #matrixSampleIntercept vector [samples]
+  #matrixSampleNu
+  #vectorTestData
   
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
-  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, parametersModel)
+  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll,
+                                      matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
+                                      vectorTestData, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
   setkey(dateTable, dayId)
@@ -175,7 +191,8 @@ processSTANOutput <- function(modelFit, parametersModel, saveSamples = F){
     return(list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP))
   }else{
     return(list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
-                matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives))
+                matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives,
+                matrixSampleRandomEffect = matrixSampleRandomEffect, matrixSampleHyperAll = matrixSampleHyperAll, matrixSampleIntercept = matrixSampleIntercept))
   }
 }
 
