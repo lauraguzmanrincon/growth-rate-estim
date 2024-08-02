@@ -22,9 +22,8 @@
 runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL, maxDate = NULL, seed = sample(1000, 1),
                                parametersStan = list(sampleFile = "MCMC_samples", chains = 1, iter = 10000, warmup = 5000, thin = 1)){
   # Load parameters into function environment and add auxiliar variables
-  list2env(parametersModel$params, envir = environment())
-  list2env(parametersModel$config, envir = environment())
-  levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+  #list2env(parametersModel$params, envir = environment())
+  #list2env(parametersModel$config, envir = environment())
   
   # Create auxiliar table with dates
   if(is.null(minDate)) minDate <- min(countTable$date)
@@ -75,9 +74,11 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   else{
     modelExec <- modelExec_NB
   }
+  # TODO today... write other file
   
   # Data to Stan
   # We assume dayId runs from 1 in steps of unitTime
+  # TODO works only for day of the week effect
   modelData <- list(
     # dimensions
     num_days = nrow(dataForModelNoNa), #as.integer(numDays),
@@ -86,39 +87,46 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
     t = dataForModelNoNa[order(dayId), dayId], #1:numDays,
     pos = dataForModelNoNa[order(dayId), positiveResults],
     tot = dataForModelNoNa[order(dayId), as.integer(numberTest)],
-    day_to_group = as.integer(dataForModelNoNa[order(dayId), factor(dayWeek, levels = levelsWeek)]),
+    day_to_group = as.integer(dataForModelNoNa[order(dayId), factor(dayWeek, levels = parametersModel$internal$levelsWeek)]),
+    # prior intercept
+    m_int = parametersModel$params$interceptPrior$mean,
+    sig_int = 1/sqrt(parametersModel$params$interceptPrior$prec),
     # prior dispersion
-    m_eta = parametersModel$params$NB.prior.rho$size$param[1], # NB
-    sig_eta = 1/sqrt(parametersModel$params$NB.prior.rho$size$param[2]), # NB
-    m_rho = parametersModel$params$BB.prior.rho$overdispersion$param[1], # BB
-    sig_rho = 1/sqrt(parametersModel$params$BB.prior.rho$overdispersion$param[2]), # BB
+    m_eta = parametersModel$params$dispersionPrior$mean, # positives
+    sig_eta = 1/sqrt(parametersModel$params$dispersionPrior$prec), # positives
+    m_rho = parametersModel$params$dispersionPrior$mean, # proportions
+    sig_rho = 1/sqrt(parametersModel$params$dispersionPrior$prec), # proportions
     # prior day-of-the-week effect
-    a_w = parametersModel$params$dayWeek.prior.prec$theta$param[1],
-    b_w = parametersModel$params$dayWeek.prior.prec$theta$param[2],
+    a_w = parametersModel$params$randomEffectPrior$a,
+    b_w = parametersModel$params$randomEffectPrior$b,
     # prior GP
-    log_theta_0 = parametersModel$params$theta.prior2.mean[2:1] + log(c(parametersModel$params$prior2.range0, parametersModel$params$prior2.sigma0)),
-    B = solve(parametersModel$params$theta.prior2.prec))
+    log_theta_0 = 0 + log(parametersModel$params$GPHyperparamPrior$mean),
+    #OLDparametersModel$params$theta.prior2.mean[2:1] + log(c(parametersModel$params$prior2.range0, parametersModel$params$prior2.sigma0)),
+    B = parametersModel$params$GPHyperparamPrior$B)
   
   # Initial values
   set.seed(seed)
   if(parametersModel$param$linkType == "NB"){
-    modelInits <- replicate(parametersStan$chains, list(eta = exp(rnorm(n = 1, mean = modelData$m_eta, sd = modelData$sig_eta)),
-                                                        x_t = log(modelData$pos),
+    x_t_notTrasnform <- log(modelData$pos)
+    modelInits <- replicate(parametersStan$chains, list(intercept = mean(log(modelData$pos)),
+                                                        eta = exp(rnorm(n = 1, mean = modelData$m_eta, sd = modelData$sig_eta)),
+                                                        x_t = x_t_notTrasnform - mean(x_t_notTrasnform),
+                                                        #TODO
                                                         log_theta_x = mvtnorm::rmvnorm(n = 1,
-                                                                                       mean = log(c(parametersModel$params$prior2.range0, parametersModel$params$prior2.sigma0)) +
-                                                                                         parametersModel$params$theta.prior2.mean,
-                                                                                       sigma = solve(parametersModel$params$theta.prior2.prec))[1,],
+                                                                                       mean = log(parametersModel$params$GPHyperparamPrior$mean) + 0,
+                                                                                       sigma = parametersModel$params$GPHyperparamPrior$B)[1,],
                                                         w_d = rep(0, length(parametersModel$internal$levelsWeek)),
                                                         tau_w = rgamma(1, shape = modelData$a_w, rate = modelData$b_w)), simplify = F)
   }else if(parametersModel$param$linkType == "BB"){
     logit <- function(p) log(p/(1 - p))
     inv.logit <- function(x) exp(x)/(1 + exp(x))
-    modelInits <- replicate(parametersStan$chains, list(rho = inv.logit(rnorm(n = 1, mean = -2, sd = modelData$sig_rho)), #modelData$m_rho
-                                                        x_t = logit(pmin(pmax(modelData$pos, 1), modelData$tot - 1)/modelData$tot),
+    x_t_notTrasnform <- logit(pmin(pmax(modelData$pos, 1), modelData$tot - 1)/modelData$tot)
+    modelInits <- replicate(parametersStan$chains, list(intercept = rnorm(n = 1, mean = modelData$m_int, sd = modelData$sig_int),
+                                                        rho = inv.logit(rnorm(n = 1, mean = modelData$m_rho, sd = modelData$sig_rho)), #modelData$m_rho OR -2?
+                                                        x_t = x_t_notTrasnform - mean(x_t_notTrasnform),
                                                         log_theta_x = mvtnorm::rmvnorm(n = 1,
-                                                                                       mean = log(c(parametersModel$params$prior2.range0, parametersModel$params$prior2.sigma0)) +
-                                                                                         parametersModel$params$theta.prior2.mean,
-                                                                                       sigma = solve(parametersModel$params$theta.prior2.prec))[1,],
+                                                                                       mean = log(parametersModel$params$GPHyperparamPrior$mean) + 0,
+                                                                                       sigma = parametersModel$params$GPHyperparamPrior$B)[1,],
                                                         w_d = rep(0, length(levelsWeek)),
                                                         tau_w = rgamma(1, shape = modelData$a_w, rate = modelData$b_w)), simplify = F)
   }
@@ -140,7 +148,8 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, minDate = NULL,
   modelStanc <- modelExec@model_code
   objectStan <- list(modelFit = modelFit,
                      modelStanc = modelStanc,
-                     dataForModel = dataForModel)
+                     dataForModel = dataForModel,
+                     dateList = list(dateTable = dateTable, numDays = numDays, minDay = minDay, maxDay = maxDay))
   
   cat("Saving modelFit, modelStanc, modelData, parametersStan in ", parametersStan$sampleFile, ".RData\n", sep = "")
   #save(modelFit, modelStanc, dataForModel, parametersStan, file = paste0(parametersStan$sampleFile, ".RData")) # 30.11.2023
@@ -159,6 +168,7 @@ processSTANOutput <- function(objectStan, parametersModel, saveSamples = F){
   matrixSampleDays <- t(samplesFit$x_t)
   
   # Samples derivative
+  # TODO Condition on parametersModel$config$derivativeFromGP !! can we use getGrowthFromSamples_GP here?
   sampleDerivatives <- getGrowthFromSamples(matrixSampleDays)
   
   # Samples parameters
@@ -172,56 +182,81 @@ processSTANOutput <- function(objectStan, parametersModel, saveSamples = F){
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
-  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll,
+  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleOverdisp,
                                       matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
                                       vectorTestData, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
-  setkey(dateTable, dayId)
-  listPosteriors$posteriorGrowth[dateTable, ":="(date = i.date)]
+  setkey(objectStan$dateList$dateTable, dayId)
+  listPosteriors$posteriorGrowth[objectStan$dateList$dateTable, ":="(date = i.date)]
   
   setkey(listPosteriors$posteriorTransfGP, dayId)
-  setkey(dateTable, dayId)
-  listPosteriors$posteriorTransfGP[dateTable, ":="(date = i.date)]
+  setkey(objectStan$dateList$dateTable, dayId)
+  listPosteriors$posteriorTransfGP[objectStan$dateList$dateTable, ":="(date = i.date)]
   setkey(listPosteriors$posteriorTransfGP, date)
-  setkey(countTable, date)
-  listPosteriors$posteriorTransfGP[countTable, ":="(positiveResults = i.positiveResults)]
+  setkey(objectStan$dataForModel, date)
+  listPosteriors$posteriorTransfGP[objectStan$dataForModel, ":="(positiveResults = i.positiveResults, numberTest = i.numberTest)]
   
-  if(saveSamples == F){
-    return(list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP))
-  }else{
-    return(list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
-                matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives,
-                matrixSampleRandomEffect = matrixSampleRandomEffect, matrixSampleHyperAll = matrixSampleHyperAll, matrixSampleIntercept = matrixSampleIntercept))
-  }
+  # Output
+  output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
+                      posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
+                      dateList = objectStan$dateList, dataForModel = objectStan$dataForModel)
+  output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives,
+                         matrixSampleRandomEffect = matrixSampleRandomEffect, matrixSampleHyperAll = matrixSampleHyperAll, matrixSampleIntercept = matrixSampleIntercept)
+  
+  output <- output_main
+  if(saveSamples == T) output <- c(output, output_samples, list(outputType = "MCMC_Stan"))
+  return(output)
 }
 
 #' Creates and stores executable in global environment
 #' TODO how to do in package?
 #' TODO do it before running? Annoying error when using Github desktop
 constructStanExec <- function(linkType, dirSource){
-  if(linkType == "BB"){
-    if(!exists("modelExec_BB", envir = .GlobalEnv)){
-      cat("Creating executable...\n")
-      
-      # Translate Stan Code to C++ with stanc
-      modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_BB.stan"))
-      
-      # Make an Executable Stan Model with stan model
-      modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
-      assign("modelExec_BB", modelExec, envir = .GlobalEnv)
-    }
-  }else{
+  # TODO test if exists. Add indicator to variable to show (model type + covariance types).
+  # TODO write code dynamically
+  
+  # Temporal code
+  if(1){
     if(!exists("modelExec_NB", envir = .GlobalEnv)){
-      cat("Creating executable...\n")
+      cat("Creating temporary executable for the positives model...\n")
       
       # Translate Stan Code to C++ with stanc
-      modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_NB.stan"))
+      modelStanc <- stanc(file = paste0("/Users/lauraguzmanrincon/Downloads/", "/Stan_fit_temp.stan"))
       
       # Make an Executable Stan Model with stan model
       modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
       #readLines("src/Stan_fit_NB.stan")[readLines("src/Stan_fit_NB.stan") != ""][67]
       assign("modelExec_NB", modelExec, envir = .GlobalEnv)
+    }else{
+      cat("Reusing executable for the positives model...\n")
+    }
+  }
+  
+  if(0){
+    if(linkType == "BB"){
+      if(!exists("modelExec_BB", envir = .GlobalEnv)){
+        cat("Creating executable for the proportions model...\n")
+        
+        # Translate Stan Code to C++ with stanc
+        modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_BB.stan"))
+        
+        # Make an Executable Stan Model with stan model
+        modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
+        assign("modelExec_BB", modelExec, envir = .GlobalEnv)
+      }
+    }else{
+      if(!exists("modelExec_NB", envir = .GlobalEnv)){
+        cat("Creating executable for the positives model...\n")
+        
+        # Translate Stan Code to C++ with stanc
+        modelStanc <- stanc(file = paste0(dirSource, "/Stan_fit_NB.stan"))
+        
+        # Make an Executable Stan Model with stan model
+        modelExec <- stan_model(stanc_ret = modelStanc) # ~30s
+        #readLines("src/Stan_fit_NB.stan")[readLines("src/Stan_fit_NB.stan") != ""][67]
+        assign("modelExec_NB", modelExec, envir = .GlobalEnv)
+      }
     }
   }
 }

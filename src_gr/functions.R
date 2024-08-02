@@ -274,7 +274,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
-  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll,
+  listPosteriors <- computePosteriors(matrixSampleDays, sampleDerivatives, matrixSampleHyperAll[c("overdispersion"),],
                                       matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
                                       vectorTestData, parametersModel)
   
@@ -290,7 +290,8 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   listPosteriors$posteriorTransfGP[objectInla$dataForModel, ":="(positiveResults = i.positiveResults, numberTest = i.numberTest)]
   
   # Output
-  output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
+  output_main <- list(outputType = "Approx_INLA",
+                      posteriorGrowth = listPosteriors$posteriorGrowth, posteriorTransfGP = listPosteriors$posteriorTransfGP,
                       posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
                       dateList = objectInla$dateList, dataForModel = objectInla$dataForModel)
   output_samples <- list(matrixSampleDays = matrixSampleDays, sampleDerivatives = sampleDerivatives,
@@ -299,7 +300,7 @@ processINLAOutput <- function(objectInla, parametersModel, saveSamples = F){
   
   output <- output_main
   if(saveSamples == T) output <- c(output, output_samples)
-  if(parametersModel$config$computeGPProjection == T) output <- c(output, output_projection)
+  if(parametersModel$config$computeGPProjection == T) output <- c(output, output_projection, list(outputType = "Approx_INLA"))
   return(output)
 }
 
@@ -323,11 +324,12 @@ getGrowthFromSamples <- function(matrixSampleDays){
 #' TODO objectInla should not be arg? should be undo into dataForModel as arg only and objectInla optional?
 #' matrixSampleDays, sampleDerivatives, matrixSampleNu: matrix [dayId x samples]
 #' matrixSampleHyper: matrix [c("theta1", "theta2", "overdispersion", "precision") x samples]
+#' matrixSampleOverdisp: vector(samples)
 #' matrixSampleRandomEffect: matrix [dayId OR dayWeek OR other x samples]
 #' matrixSampleIntercept: vector [samples]
 #' matrixTestData: vector [dayId]
 #' parametersModel
-computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleHyper,
+computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleOverdisp,
                               matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
                               matrixTestData, parametersModel,
                               ifINLAMarginal = FALSE){
@@ -358,6 +360,7 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # ---------------------------------------------------- #
   # Compute posterior of Gaussian process in real space (incidence or positivity)
   cat("Computing posterior of incidence... ")
+  parametersModel$params$hasConstant <- T # TODO remove eventually
   if(ifINLAMarginal & !parametersModel$params$hasConstant){
     # (this version is slow and applies only to INLA)
     # depurar?
@@ -401,14 +404,14 @@ computePosteriors <- function(matrixSampleDays, sampleDerivatives, matrixSampleH
   # ---------------------------------------------------- #
   # Compute the model posterior (as in R31.R)
   sizeSample <- parametersModel$config$sizeSample
-  sampleOverdisp <- matrixSampleHyper[c("overdispersion"),]
+  #sampleOverdisp <- matrixSampleHyper[c("overdispersion"),]
   if(parametersModel$params$linkType == "NB"){
     samplesFit <- matrix(rnbinom(n = matrix(1, nrow = numDays, ncol = sizeSample),
-                                size = matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T),
+                                size = matrix(matrixSampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T),
                                 mu = exp(matrixSampleNu)),
                         nrow = numDays, ncol = sizeSample, byrow = F)
   }else{
-    matrixSampleOverdisp <- matrix(sampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T)
+    matrixSampleOverdisp <- matrix(matrixSampleOverdisp, nrow = numDays, ncol = sizeSample, byrow = T)
     samplesMu <- exp(matrixSampleNu)/(1 + exp(matrixSampleNu))
     matrixAlpha <- samplesMu*(1 - matrixSampleOverdisp)/matrixSampleOverdisp
     matrixBeta <- (1 - samplesMu)*(1 - matrixSampleOverdisp)/matrixSampleOverdisp
