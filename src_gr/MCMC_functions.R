@@ -172,12 +172,22 @@ processSTANOutput <- function(objectStan, parametersModel, saveSamples = F){
   sampleDerivatives <- getGrowthFromSamples(matrixSampleDays)
   
   # Samples parameters
-  # TODO
-  #matrixSampleRandomEffect matrix [ x samples]
+  # TODO do we need this one?
   #matrixSampleHyperAll matrix [c("theta1", "theta2", "overdispersion", "precision") x samples]
-  #matrixSampleIntercept vector [samples]
-  #matrixSampleNu
-  #vectorTestData
+  matrixSampleRandomEffect <- t(samplesFit$w_d)
+  if(parametersRun$params$linkType == "BB"){
+    matrixSampleOverdisp <- samplesFit$rho
+  }else{
+    matrixSampleOverdisp <- samplesFit$eta
+  }
+  matrixSampleIntercept <- samplesFit$intercept # TODO still doesnt work for BB...
+  orderDayWeek <- as.integer(objectStan$dataForModel[order(dayId), sapply(dayWeek, function(dw) which(dw == c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")))])
+  matrixSampleNu <- t(c(matrixSampleIntercept) + t(matrixSampleDays) + t(matrixSampleRandomEffect)[,orderDayWeek])
+  vectorTestData <- objectStan$dataForModel[order(dayId), numberTest]
+  matrixSampleHyperAll <- rbind(matrixSampleOverdisp,
+                                samplesFit$tau_w,
+                                t(samplesFit$log_theta_x))
+  rownames(matrixSampleHyperAll) <- c("overdispersion", "precision", paste("logParam", 1:ncol(samplesFit$log_theta_x), sep = ""))
   
   # ---------------------------------------------------- #
   #                  PRODUCE OUTPUT                      #
