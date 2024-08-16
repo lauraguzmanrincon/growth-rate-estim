@@ -197,8 +197,7 @@ getSamplesGPDerivative_GPmatern12 <- function(matrixSampleGP, samplesHyperparam,
   
   # Compute distance matrix for ordered days
   distanceMatrix <- sapply(1:numDays, function(nd) abs(nd - (1:numDays)))
-  auxRelativeDistanceMatrix <- matrix(data = 1:numDays, nrow = numDays, ncol = numDays, byrow = F) -
-    matrix(data = 1:numDays, nrow = numDays, ncol = numDays, byrow = T)
+  auxRelativeDistanceMatrix <- outer(X = 1:numDays, Y = 1:numDays, FUN = "-")
   
   # Compute auxiliar vectors, with vGP = 3/2
   sig2Vector <- (sigma0*exp(samplesHyperparam["logParam1",]))^2
@@ -216,7 +215,6 @@ getSamplesGPDerivative_GPmatern12 <- function(matrixSampleGP, samplesHyperparam,
     fVector <- matrixSampleGP[, indexSample]
     
     # Compute derivative matrices of f:
-    # (OLD) d1Matrix -> KXpX, dMatrixAll -> KXpXp
     KXpX <- -sig2Value*kappaVal^2*auxRelativeDistanceMatrix*expMatrix # K(X*,X) - first partial derivative
     KXpXp <- sig2Value*kappaVal^2*expMatrix*(1 - kappaVal*distanceMatrix) # K(X*,X*) - second partial derivative
     #KXpXp <- sig2Value*kappaVal^2*diag(expMatrix)*(1 - kappaVal*diag(distanceMatrix)) # here we only compute the diagonal
