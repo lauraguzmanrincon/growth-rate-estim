@@ -180,7 +180,7 @@ constructInputDataTable <- function(countTable, dateList){
   setkey(countTable, date)
   dataForModel[countTable, ":="(numberTest = i.numberTest, positiveResults = i.positiveResults)]
   dataForModel[numberTest == 0, ":="(numberTest = NA, positiveResults = NA)]
-  if(unitTime == "day"){
+  if(dateList$unitTime == "day"){
     dataForModel[, dayWeek := weekdays(date)]
   }else{
     dataForModel[, dayWeek := NA]

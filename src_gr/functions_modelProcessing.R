@@ -1,4 +1,88 @@
 
+
+#' Title
+#' 
+#' Wrapper
+#'
+#' @param countTable data table with one row per day (of days with available data) and these columns:
+#' - numberTest: number of test on the day (>= 0)
+#' - positiveResults: number of positive tests (<= numberTest and >= 0)
+#' - date: date of count in R date format
+#' @param parametersModel output of setModelParameters
+#' @param inferenceSettings output of setInferenceSettings
+#' @param minDate (optional) minimum date to include in the model
+#' @param maxDate (optional) maximum date to include in the model
+#' @param dateList (optional, advanced) structure as from constructDateList... personalised
+#' @param saveModelObject (optional, advanced) return output from INLA/STAN as output$objectInla/objectStan
+#'
+#' @return ...returns matrixSampleGP and matrixSampleGPDerivative,
+#'              two matrices of size [days, num. samples] containing samples of the posterior of the GP and GP derivative respectively.
+#' @export
+#'
+#' @examples
+runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, minDate = NULL, maxDate = NULL, dateList = NULL, saveSamples = T, saveModelObject = F){
+  # TODO check if min dates in countTable are aligned as in unitTime
+  # TODO include cases with no date
+  
+  # Checks
+  if(is.null(minDate)) minDate <- min(countTable$date)
+  if(is.null(maxDate)) maxDate <- max(countTable$date)
+  if(!is.null(dateList)){
+    # Advanced
+    if(dateList$unitTime != parametersModel$unitTime) stop("dateList$unitTime is not the same as parametersModel$unitTime")
+  }
+  
+  # ---------------------------------------------------- #
+  #                      SHAPE DATA                      #
+  # ---------------------------------------------------- #
+  
+  if(is.null(dateList)){
+    # Create date table with time points to make inference
+    dateList <- constructDateList(countTable = countTable,
+                                  unitTime = parametersModel$unitTime,
+                                  minDate = minDate,
+                                  maxDate = maxDate)
+  }
+  
+  # Create data table with all days in dateList, including the ones with missing data
+  dataForModel <- constructInputDataTable(countTable = countTable,
+                                          dateList = dateList)
+  
+  # ---------------------------------------------------- #
+  #                      FIT MODEL                       #
+  # ---------------------------------------------------- #
+  
+  if(inferenceSettings$inferenceType == "LA-INLA"){
+    outputInla <- runModelGrowthRate_INLA(dataForModel = dataForModel,
+                                          dateList = dateList,
+                                          parametersModel = parametersModel,
+                                          inferenceSettings = inferenceSettings)
+    output <- processINLAOutput(objectInla = outputInla,
+                                parametersModel = parametersModel,
+                                inferenceSettings = settingsINLA,
+                                saveSamples = saveSamples,
+                                saveInlaObject = saveModelObject)
+  }else if(inferenceSettings$inferenceType == "MCMC-STAN"){
+    outputStan <- runModelGrowthRate_STAN(dataForModel = dataForModel,
+                                          dateList = dateList,
+                                          parametersModel = parametersModel,
+                                          inferenceSettings = inferenceSettings)
+    output <- processSTANOutput(objectStan = outputStan,
+                                parametersModel = parametersModel,
+                                inferenceSettings = inferenceSettings,
+                                saveSamples = saveSamples,
+                                saveStanObject = saveModelObject)
+  }else if(inferenceSettings$inferenceType == "MCMC-Int"){
+    # TODO
+    output <- NULL
+  }else{
+    stop("Invalid inferenceType")
+  }
+  
+  return(output)
+}
+
+
 #' (Private) Title
 #'
 #' @param matrixSampleGP matrix [dayId x samples]

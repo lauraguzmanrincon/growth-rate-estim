@@ -15,6 +15,10 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
   
   if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
   
+  # ---------------------------------------------------- #
+  #                       SET-UP                         #
+  # ---------------------------------------------------- #
+  
   # Get basis configuration
   currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
   sizeSample <- outputModel$numSamples
@@ -30,12 +34,16 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
   
   # Get basis parameters
   vGP <- 2 - 1/2
-  sigma0 <- parametersModel$params$prior2.sigma0
-  range0 <- parametersModel$params$prior2.range0
+  sigma0 <- parametersModel$GPcovarianceList$theta0[1]
+  range0 <- 2*parametersModel$GPcovarianceList$theta0[2]
   
   # Compute auxiliar vectors
-  sig2Vector <- (sigma0*exp(outputModel$matrixSampleHyperAll["theta1",]))^2
-  kappaVector <- sqrt(8*vGP)/(range0*exp(outputModel$matrixSampleHyperAll["theta2",]))
+  sig2Vector <- (sigma0*exp(outputModel$matrixSampleHyperparameters["logParam1",]))^2
+  kappaVector <- sqrt(8*vGP)/(range0*exp(outputModel$matrixSampleHyperparameters["logParam2",]))
+  
+  # ---------------------------------------------------- #
+  #                  PRODUCE SAMPLES                     #
+  # ---------------------------------------------------- #
   
   # Loop per sample of (f1, ..., fn, log.tau, log.kappa)
   sampleProjections <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
@@ -66,7 +74,6 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
     meanMVN <- KPredObs%*%invDeltaMatrix%*%fVector
     sigmaMVN <- KPredPred - KPredObs%*%invDeltaMatrix%*%t(KPredObs)
     ###
-    print(sigmaMVN)
     iSampleGP <- MASS::mvrnorm(n = 1, mu = meanMVN[1:sizePrediction], Sigma = sigmaMVN[1:sizePrediction,1:sizePrediction])
     iSampleGR <- MASS::mvrnorm(n = 1, mu = meanMVN[(sizePrediction + 1):(2*sizePrediction)],
                                Sigma = sigmaMVN[(sizePrediction + 1):(2*sizePrediction),(sizePrediction + 1):(2*sizePrediction)])
@@ -87,10 +94,24 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
   
   if(sum(errorIterations) > 0) warning("Sigma not positive definite for ", sum(errorIterations), " samples out of ", sizeSample)
   
+  # ---------------------------------------------------- #
+  #                SAMPLES DERIVATIVE/GR                 #
+  # ---------------------------------------------------- #
+  
+  # sampleDerivatives already computed from the GP above
+  # We do it again if derivative is calculated from approximation
+  if(parametersModel$config$derivativeFromGP == F){
+    sampleDerivatives <- getGrowthFromSamples(matrixSampleDays = rbind(matrixSampleGP, sampleProjections))[predInterval,]
+  }
+  
   # Transform derivatives to GR
-  samplesGR <- getSamplesGR(matrixSampleDays = sampleProjections,
-                            sampleDerivatives = sampleDerivatives,
-                            parametersModel = parametersModel)
+  samplesGR <- getSamplesGrowthRate(matrixSampleGP = sampleProjections,
+                                    matrixSampleGPDerivative = sampleDerivatives,
+                                    parametersModel = parametersModel)
+  
+  # ---------------------------------------------------- #
+  #                    SAMPLES BOUNDARY                  #
+  # ---------------------------------------------------- #
   
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
   if(parametersModel$config$derivativeFromGP == F){
@@ -106,7 +127,7 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
               sizePrediction = sizePrediction))
 }
 
-getProjectionGPOnly_RQ <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+getProjectionGP_RQ <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
   
   if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
   
@@ -116,9 +137,9 @@ getProjectionGPOnly_RQ <- function(parametersModel, outputModel, currentDate, si
   
   # Get basis configuration
   currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
-  sizeSample <- parametersModel$config$sizeSample
+  sizeSample <- outputModel$numSamples
   numDaysPast <- min(outputModel$dateList$numDays, daysForPrediction)
-  matrixSampleGP <- outputModel$matrixSampleDays[(currentDayId - daysForPrediction + 1):currentDayId,]
+  matrixSampleGP <- outputModel$matrixSampleGP[(currentDayId - daysForPrediction + 1):currentDayId,]
   
   # Compute distance matrix for ordered days
   pastInterval <- 1:numDaysPast

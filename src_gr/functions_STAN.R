@@ -1,40 +1,23 @@
 
 #' Title
 #'
-#' @param countTable data table with one row per day (of days with available data) and these columns:
-#' - numberTest: number of test on the day (>= 0)
-#' - positiveResults: number of positive tests (<= numberTest and >= 0)
-#' - date: date of count in R date format
+#' @param dataForModel 
+#' @param dateList 
 #' @param parametersModel output of setModelParameters
 #' @param inferenceSettings output of setInferenceSettings
-#' @param minDate (optional) minimum date to include in the model
-#' @param maxDate (optional) maximum date to include in the model
 #'
-#' @return ...returns matrixSampleGP and matrixSampleGPDerivative,
-#'              two matrices of size [days, num. samples] containing samples of the posterior of the GP and GP derivative respectively.
+#' @return ...returns objectStan (includes dataForModel)
 #'         ... dataForModel: this data includes all days in range. Recall STAN does not recieve the ones without positives and tests
 #' @export
 #'
 #' @examples
-runModelGrowthRate_STAN <- function(countTable, parametersModel, inferenceSettings, minDate = NULL, maxDate = NULL){
+runModelGrowthRate_STAN <- function(dataForModel, dateList, parametersModel, inferenceSettings){
   
-  if(is.null(minDate)) minDate <- min(countTable$date)
-  if(is.null(maxDate)) maxDate <- max(countTable$date)
   internalConstants <- getInternalSettings()
   
   # ---------------------------------------------------- #
-  #                      SHAPE DATA                      #
+  #                   SHAPE DATA FOR STAN                #
   # ---------------------------------------------------- #
-  
-  # Create auxiliar table with dates
-  dateList <- constructDateList(countTable = countTable,
-                                unitTime = parametersModel$unitTime,
-                                minDate = minDate,
-                                maxDate = maxDate)
-  
-  # Create data table with all days, including the ones with missing data
-  dataForModel <- constructInputDataTable(countTable = countTable,
-                                          dateList = dateList)
   
   if(parametersModel$linkType == "BB"){
     # TODO what if NA in numberTest for BB???
@@ -156,7 +139,9 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, inferenceSettin
 #' @export
 #'
 #' @examples
-processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, saveSamples = T){
+processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, saveSamples = T, saveStanObject = F){
+  # TODO process less samples than iterations??
+  
   internalConstants <- getInternalSettings()
   
   # ---------------------------------------------------- #
@@ -206,7 +191,9 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
   setkey(objectStan$dataForModel, date)
   listPosteriors$posteriorTransfGP[objectStan$dataForModel, ":="(positiveResults = i.positiveResults, numberTest = i.numberTest)]
   
+  
   # Output
+  if(saveStanObject == F) objectStan <- NULL
   output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth,
                       posteriorTransfGP = listPosteriors$posteriorTransfGP,
                       posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
@@ -214,7 +201,8 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
                       posteriorHyperparameters = listPosteriors$posteriorHyperparameters,
                       dateList = objectStan$dateList,
                       dataForModel = objectStan$dataForModel,
-                      inferenceSettings = inferenceSettings)
+                      inferenceSettings = inferenceSettings,
+                      objectStan = objectStan)
   output_samples <- list(numSamples = ncol(matrixSampleGP), # TODO check
                          matrixSampleGP = matrixSampleGP,
                          matrixSampleGPDerivative = matrixSampleGPDerivative,
