@@ -29,6 +29,7 @@ setModelParameters <- function(modelType,
   covarianceValues <- c("matern12", "periodic", "rationalQ")
   covarianceNotValid <- sapply(GPcovariance, function(cov) !cov$type %in% covarianceValues)
   if(sum(covarianceNotValid) != 0) stop(paste0("Type of 'GPcovariance' can only take value from '", paste(covarianceValues, collapse = "','"),"'."))
+  if(randomEffect == "weekday" & unitTime != "day") stop("randomEffect cannot be 'weekday' if unitTime is not 'day'.")
   
   # New variables
   linkType <- ifelse(modelType == "positives", "NB", "BB")
@@ -122,22 +123,30 @@ setInferenceSettings <- function(inferenceType = "LA-INLA",
 }
 
 #' Title
+#' 
+#' Equally spaced time steps between minDate and maxDate
 #'
 #' @param countTable 
-#' @param unitTime 
-#' @param minDate 
-#' @param maxDate 
+#' @param unitTime "day" "week" "integer"
+#' @param minDate (integer or date)
+#' @param maxDate (integer or date)
 #'
 #' @return
 #' @export
 #'
 #' @examples
 constructDateList <- function(countTable, unitTime, minDate, maxDate){
+  if(unitTime == "integer"){
+    dateSeq <- seq(from = minDate, to = maxDate, by = unitTime)
+  }else{
+    dateSeq <- seq.Date(from = minDate, to = maxDate, by = unitTime)
+  }
+  
   minDay <- 1
-  maxDay <- length(seq.Date(from = minDate, to = maxDate, by = unitTime)) #as.integer(maxDate - minDate + 1)
+  maxDay <- length(dateSeq)
   numDays <- maxDay
   dateTable <- data.table(dayId = minDay:maxDay,
-                          date = seq.Date(from = minDate, to = maxDate, by = unitTime))
+                          date = dateSeq)
   if(nrow(dateTable) <= 1) stop("There must be at least 2 time units between minDate and maxDate")
   
   dateList <- list(dateTable = dateTable,
@@ -149,6 +158,35 @@ constructDateList <- function(countTable, unitTime, minDate, maxDate){
                    unitTime = unitTime)
   
   return(dateList)
+}
+
+#' Title
+#' 
+#' Create data with all days, including the ones with missing data
+#'
+#' @param countTable 
+#' @param dateList 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+constructInputDataTable <- function(countTable, dateList){
+  dataForModel <- dateList$dateTable[order(dayId), .(dayId,
+                                                     date,
+                                                     numberTest = as.integer(NA),
+                                                     positiveResults = as.integer(NA))]
+  setkey(dataForModel, date)
+  setkey(countTable, date)
+  dataForModel[countTable, ":="(numberTest = i.numberTest, positiveResults = i.positiveResults)]
+  dataForModel[numberTest == 0, ":="(numberTest = NA, positiveResults = NA)]
+  if(unitTime == "day"){
+    dataForModel[, dayWeek := weekdays(date)]
+  }else{
+    dataForModel[, dayWeek := NA]
+  }
+  
+  return(dataForModel)
 }
 
 #' (Private)

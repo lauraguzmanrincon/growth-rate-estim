@@ -18,6 +18,8 @@
 runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, minDate = NULL, maxDate = NULL){
   # TODO check and complete content of parametersModel from function (i.e. if NULL then default)
   
+  if(is.null(minDate)) minDate <- min(countTable$date)
+  if(is.null(maxDate)) maxDate <- max(countTable$date)
   internalConstants <- getInternalSettings()
   
   # TODO check covariance is only Matern
@@ -26,33 +28,30 @@ runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, m
   # TODO check if min dates in countTable are aligned as in unitTime
   # TODO include cases with no date
   
+  # ---------------------------------------------------- #
+  #                      SHAPE DATA                      #
+  # ---------------------------------------------------- #
+  
   # Create auxiliar table with dates
-  if(is.null(minDate)) minDate <- min(countTable$date)
-  if(is.null(maxDate)) maxDate <- max(countTable$date)
   dateList <- constructDateList(countTable = countTable,
                                 unitTime = parametersModel$unitTime,
                                 minDate = minDate,
                                 maxDate = maxDate)
   
+  # Create data table with all days, including the ones with missing data
+  dataForModel <- constructInputDataTable(countTable = countTable,
+                                          dateList = dateList)
+  
   # ---------------------------------------------------- #
   #                      FIT MODEL                       #
   # ---------------------------------------------------- #
-  # Create data with all days, including the ones with missing data
-  dataForModel <- data.table(dayId = dateList$minDay:dateList$maxDay,
-                             date = seq.Date(from = dateList$minDate, to = dateList$maxDate, by = dateList$unitTime),
-                             numberTest = as.integer(NA),
-                             positiveResults = as.integer(NA))
-  setkey(dataForModel, date)
-  setkey(countTable, date)
-  dataForModel[countTable, ":="(numberTest = i.numberTest, positiveResults = i.positiveResults)]
-  dataForModel[numberTest == 0, ":="(numberTest = NA, positiveResults = NA)]
-  dataForModel[, dayWeek := weekdays(date)]
   
   # Define grid for finite differences
+  # TODO generalise boundary construction?
   boundaryVertices <- 200 # Points on the left and right
   boundaryStepSize <- 10 # Distance between boundary points
   boundaryPoints <- c(seq(dateList$minDay - boundaryStepSize*boundaryVertices, dateList$minDay - boundaryStepSize, by = boundaryStepSize),
-                      seq(dateList$minDay, dateList$maxDay, by = 1), 
+                      dateList$dateTable[order(dayId), dayId], 
                       seq(dateList$maxDay + boundaryStepSize, dateList$maxDay + boundaryStepSize*boundaryVertices, by = boundaryStepSize))
   nonBoundaryIndices <- (boundaryVertices + 1):(length(boundaryPoints) - boundaryVertices)
   
@@ -99,10 +98,6 @@ runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, m
     effectsList <- list(spde1.idx)
   }
   stackD <- inla.stack(data = list(positiveResults = dataForModel[order(dayId), positiveResults]),
-                       #A = list(A1, 1, 1),
-                       #effects = list(c(list(Intercept = 1), spde1.idx),
-                       #               list(dayWeek = factor(dataForModel[order(dayId), dayWeek], levels = levelsWeek)),
-                       #               list(dayId2 = dataForModel[order(dayId), dayId])),
                        A = A,
                        effects = effectsList,
                        tag = "est")
@@ -114,7 +109,6 @@ runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, m
   A.xx <- inla.spde.make.A(mesh1d, xx)
   stack.pred <- inla.stack(data = list(positiveResults = NA),
                            A = list(A.xx),
-                           #effects = list(c(list(Intercept = 1), spde1.idx)),
                            effects = list(spde1.idx), # NEW 22.09.2023' - correct extra information done at the beginning
                            tag = "pred")
   joint.stack <- inla.stack(stackD, stack.pred)
@@ -153,7 +147,7 @@ runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, m
   }
   
   objectInla$dateList <- dateList
-  objectInla$dataForModel <- dataForModel # from minDays to maxDays
+  objectInla$dataForModel <- dataForModel
   objectInla$nonBoundaryIndices <- nonBoundaryIndices # TODO better way?
   return(objectInla)
 }

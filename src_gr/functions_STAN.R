@@ -18,29 +18,23 @@
 #' @examples
 runModelGrowthRate_STAN <- function(countTable, parametersModel, inferenceSettings, minDate = NULL, maxDate = NULL){
   
-  internalConstants <- getInternalSettings()
-  
-  # Create auxiliar table with dates
   if(is.null(minDate)) minDate <- min(countTable$date)
   if(is.null(maxDate)) maxDate <- max(countTable$date)
+  internalConstants <- getInternalSettings()
+  
+  # ---------------------------------------------------- #
+  #                      SHAPE DATA                      #
+  # ---------------------------------------------------- #
+  
+  # Create auxiliar table with dates
   dateList <- constructDateList(countTable = countTable,
                                 unitTime = parametersModel$unitTime,
                                 minDate = minDate,
                                 maxDate = maxDate)
   
-  # ---------------------------------------------------- #
-  #                      FIT MODEL                       #
-  # ---------------------------------------------------- #
-  # Create data with all days, including the ones with missing data
-  dataForModel <- data.table(dayId = dateList$minDay:dateList$maxDay,
-                             date = seq.Date(from = dateList$minDate, to = dateList$maxDate, by = dateList$unitTime),
-                             numberTest = as.integer(NA),
-                             positiveResults = as.integer(NA))
-  setkey(dataForModel, date)
-  setkey(countTable, date)
-  dataForModel[countTable, ":="(numberTest = i.numberTest, positiveResults = i.positiveResults)]
-  dataForModel[numberTest == 0, ":="(numberTest = NA, positiveResults = NA)]
-  dataForModel[, dayWeek := weekdays(date)]
+  # Create data table with all days, including the ones with missing data
+  dataForModel <- constructInputDataTable(countTable = countTable,
+                                          dateList = dateList)
   
   if(parametersModel$linkType == "BB"){
     # TODO what if NA in numberTest for BB???
@@ -71,6 +65,7 @@ runModelGrowthRate_STAN <- function(countTable, parametersModel, inferenceSettin
   }
   
   # Data to Stan
+  # TODO generalise
   # We assume dayId runs from 1 in steps of unitTime
   modelData <- list(
     num_days = nrow(dataForModelNoNa), #as.integer(numDays),
@@ -189,8 +184,8 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
   matrixSampleNu <- t(c(matrixSampleIntercept) + t(matrixSampleGP) + t(matrixSampleRandomEffect)[, orderDayWeek])
   vectorTestData <- objectStan$dataForModel[order(dayId), numberTest]
   matrixSampleHyperparameters <- rbind(matrixSampleOverdisp,
-                                samplesFit$tau_w,
-                                t(samplesFit$log_theta_x))
+                                       samplesFit$tau_w,
+                                       t(samplesFit$log_theta_x))
   rownames(matrixSampleHyperparameters) <- c("overdispersion", "precision", paste("logParam", 1:ncol(samplesFit$log_theta_x), sep = ""))
   
   # ---------------------------------------------------- #
