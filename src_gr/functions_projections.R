@@ -9,88 +9,17 @@
 # daysForPrediction:
 # testingVector: tests in the future days to project
 
-#' currentDayId: Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
-#' DEPRICATED 22.09.2023
-#getProjectionLinear <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
-#  currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
-#  
-#  # Prediction - linear
-#  lastDay <- currentDayId - 1
-#  xVal <- (currentDayId - daysForPrediction):(currentDayId - 1)
-#  xxVal <- currentDayId + (0:sizePrediction) # + (0:(sizePrediction - 1)) # *** !!!!!!!!! ????
-#  yMat <- outputModel$matrixSampleDays[xVal,]
-#  dMat <- outputModel$sampleDerivatives[xVal,]
-#  xxValDF <- data.frame(xVal = xxVal)
-#  length(intersect(xVal, xxVal)) == 0
-#  
-#  # Create matrix with projection
-#  tempProjectionGPLinear <- matrix(0, sizePrediction + 1, sizeSample) # ***
-#  tempProjectionGRLinear <- matrix(0, sizePrediction + 1, sizeSample) # ***
-#  for(jjj in 1:sizeSample){
-#    fitProj <- lm(dMat[,jjj] ~ poly(xVal, degree = 1, raw = TRUE))
-#    tempProjectionGPLinear[,jjj] <- 0.5*fitProj$coefficient[2]*(xxVal^2 - lastDay^2) + fitProj$coefficient[1]*(xxVal - lastDay) +
-#      outputModel$matrixSampleDays[lastDay, jjj] # see notes 19.05.2021
-#    tempProjectionGRLinear[,jjj] <- predict(fitProj, newdata = xxValDF)
-#    # e.g.  plot(c(dMat[,jjj], tempProjectionGRLinear[,jjj]))
-#    #       plot(c(yMat[,jjj], tempProjectionGPLinear[,jjj])) # ***
-#    # TODO check: if x is too large there might be a numerical error? If so, move the points to 0 before fitting
-#  }
-#  projectionGPLinear <- tempProjectionGPLinear[2:(sizePrediction + 1),]
-#  projectionGRLinear <- tempProjectionGRLinear[2:(sizePrediction + 1),]
-#  
-#  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-#  if(parametersModel$config$derivativeFromGP == F)
-#    projectionGR_onBoundary <- c(tempProjectionGRLinear[1,])
-#  else
-#    projectionGR_onBoundary <- NA
-#  
-#  return(list(projectionGP = projectionGPLinear, projectionGR = projectionGRLinear, projectionGR_onBoundary = projectionGR_onBoundary,
-#              currentDate = currentDate, sizePrediction = sizePrediction))
-#}
-
-#' Create projection matrices using GP, computed in INLA
-#' projectionGP: matrix sizePrediction x samples of samples of GP
-#' projectionGR: matrix sizePrediction x samples of samples of GR
-#' projectionGR_onBoundary: vector samples of GR in last days of observation if using finite differences (since it is NA from model)
-#' DEPRICATED 22.09.2023
-#getProjectionGP <- function(parametersModel, outputModel){
-#  daysForPrediction <- 14
-#  #firstPredictionPoint <- outputModel$dateList$maxDay
-#  sizePrediction <- parametersModel$config$sizeGPProjection # >7
-#  
-#  numDays <- outputModel$dateList$numDays
-#  matrixSampleDays <- outputModel$matrixSampleDays
-#  #BORRARmatrixDerivatives <- outputModel$sampleDerivatives
-#  
-#  # Prediction - GP
-#  projectionGPInla <- outputModel$projectionGP
-#  
-#  matrixSampleAndPred <- rbind(matrixSampleDays[(numDays - daysForPrediction + 1):numDays,], projectionGPInla)
-#  tempDerivative <- getGrowthFromSamples(matrixSampleAndPred)
-#  projectionGRInla <- tempDerivative[daysForPrediction + (1:sizePrediction),]
-#  
-#  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-#  if(parametersModel$config$derivativeFromGP == F)
-#    projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
-#  else
-#    projectionGR_onBoundary <- NA
-#  
-#  return(list(projectionGP = projectionGPInla[1:sizePrediction,], projectionGR = projectionGRInla[1:sizePrediction,],
-#              projectionGR_onBoundary = projectionGR_onBoundary,
-#              currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date], sizePrediction = sizePrediction))
-#}
-
 #' 20.09.2023 - code adapted from getGrowthFromSamples_GP() ... Key: find d1Matrix and dMatrixAll
 #'  currentDayId: Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
-getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
   
   if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
   
   # Get basis configuration
   currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
-  sizeSample <- parametersModel$config$sizeSample
+  sizeSample <- outputModel$numSamples
   numDaysPast <- min(outputModel$dateList$numDays, daysForPrediction)
-  matrixSampleGP <- outputModel$matrixSampleDays[(currentDayId - daysForPrediction + 1):currentDayId,]
+  matrixSampleGP <- outputModel$matrixSampleGP[(currentDayId - daysForPrediction + 1):currentDayId,]
   
   # Compute distance matrix for ordered days
   pastInterval <- 1:numDaysPast
@@ -136,20 +65,22 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
     # Draw samples
     meanMVN <- KPredObs%*%invDeltaMatrix%*%fVector
     sigmaMVN <- KPredPred - KPredObs%*%invDeltaMatrix%*%t(KPredObs)
+    ###
+    print(sigmaMVN)
+    iSampleGP <- MASS::mvrnorm(n = 1, mu = meanMVN[1:sizePrediction], Sigma = sigmaMVN[1:sizePrediction,1:sizePrediction])
+    iSampleGR <- MASS::mvrnorm(n = 1, mu = meanMVN[(sizePrediction + 1):(2*sizePrediction)],
+                               Sigma = sigmaMVN[(sizePrediction + 1):(2*sizePrediction),(sizePrediction + 1):(2*sizePrediction)])
     tryCatch({
-      #iSample <- MASS::mvrnorm(n = 1, mu = meanMVN, Sigma = sigmaMVN + 0.1*diag(2*sizePrediction))
       iSampleGP <- MASS::mvrnorm(n = 1, mu = meanMVN[1:sizePrediction], Sigma = sigmaMVN[1:sizePrediction,1:sizePrediction])
       iSampleGR <- MASS::mvrnorm(n = 1, mu = meanMVN[(sizePrediction + 1):(2*sizePrediction)],
                                  Sigma = sigmaMVN[(sizePrediction + 1):(2*sizePrediction),(sizePrediction + 1):(2*sizePrediction)])
     }, error = function(e) {
       errorIterations[indexSample] <- 1
-      iSampleGP <- rep(NA, 2*sizePrediction)
-      iSampleGR <- rep(NA, 2*sizePrediction)
+      print(indexSample)
+      iSample <- rep(NA, 2*sizePrediction)
     })
     
     # Save
-    #sampleProjections[,indexSample] <- iSample[1:sizePrediction]
-    #sampleDerivatives[,indexSample] <- iSample[(sizePrediction + 1):(sizePrediction)]
     sampleProjections[,indexSample] <- iSampleGP
     sampleDerivatives[,indexSample] <- iSampleGR
   }
@@ -160,11 +91,99 @@ getProjectionGP2 <- function(parametersModel, outputModel, currentDate, sizePred
   samplesGR <- getSamplesGR(matrixSampleDays = sampleProjections,
                             sampleDerivatives = sampleDerivatives,
                             parametersModel = parametersModel)
-  #ERROR1 ?samplesGR <- sampleDerivatives
   
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
   if(parametersModel$config$derivativeFromGP == F){
-    projectionGR_onBoundary <- NA # rep(0, sizeSample) #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
+    projectionGR_onBoundary <- rep(0, sizeSample) #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
+    # TODO compute GR on boundary (derivative + transformation)
+  }else{
+    projectionGR_onBoundary <- NA
+  }
+  
+  return(list(projectionGP = sampleProjections, projectionGR = samplesGR,
+              projectionGR_onBoundary = projectionGR_onBoundary,
+              currentDate = outputModel$dateList$dateTable[dayId == outputModel$dateList$maxDay, date],
+              sizePrediction = sizePrediction))
+}
+
+getProjectionGPOnly_RQ <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+  
+  if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
+  
+  # ---------------------------------------------------- #
+  #                       SET-UP                         #
+  # ---------------------------------------------------- #
+  
+  # Get basis configuration
+  currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
+  sizeSample <- parametersModel$config$sizeSample
+  numDaysPast <- min(outputModel$dateList$numDays, daysForPrediction)
+  matrixSampleGP <- outputModel$matrixSampleDays[(currentDayId - daysForPrediction + 1):currentDayId,]
+  
+  # Compute distance matrix for ordered days
+  pastInterval <- 1:numDaysPast
+  predInterval <- (numDaysPast + 1):(numDaysPast + sizePrediction)
+  #relativeDistanceMatrixObsObs <- outer(X = pastInterval, Y = pastInterval, FUN = "-")
+  #relativeDistanceMatrixPredObs <- outer(X = predInterval, Y = pastInterval, FUN = "-")
+  #relativeDistanceMatrixPredPred <- outer(X = predInterval, Y = predInterval, FUN = "-")
+  sqrDistanceMatrixObsObs <- outer(X = pastInterval, Y = pastInterval, FUN = "-")^2
+  sqrDistanceMatrixPredObs <- outer(X = predInterval, Y = pastInterval, FUN = "-")^2
+  sqrDistanceMatrixPredPred <- outer(X = predInterval, Y = predInterval, FUN = "-")^2
+  
+  # ---------------------------------------------------- #
+  #                  PRODUCE SAMPLES                     #
+  # ---------------------------------------------------- #
+  
+  sampleProjections <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
+  #sampleDerivatives <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
+  errorIterations <- rep(0, sizeSample)
+  for(indexSample in 1:sizeSample){
+    lengthValue <- exp(outputModel$matrixSampleHyperAll["logParam1", indexSample])
+    sigmaVal <- exp(outputModel$matrixSampleHyperAll["logParam2", indexSample])
+    alphaVal <- exp(outputModel$matrixSampleHyperAll["logParam3", indexSample])
+    
+    # Can we done in one but maybe saves space/time?
+    covarianceObsObs <- rationalQuadraticMatrixFn(sigma = sigmaVal, l = lengthValue, a = alphaVal, sqrInputMatrix = sqrDistanceMatrixObsObs) + 0.00001*diag(numDaysPast)
+    covariancePredObs <- rationalQuadraticMatrixFn(sigma = sigmaVal, l = lengthValue, a = alphaVal, sqrInputMatrix = sqrDistanceMatrixPredObs)
+    covariancePredPred <- rationalQuadraticMatrixFn(sigma = sigmaVal, l = lengthValue, a = alphaVal, sqrInputMatrix = sqrDistanceMatrixPredPred)
+    observation <- matrixSampleGP[, indexSample]
+    
+    importance <- covariancePredObs%*%chol2inv(chol(covarianceObsObs))
+    meanGP <- importance%*%observation
+    covGP <- covariancePredPred - importance%*%t(covariancePredObs)
+    tryCatch({
+      iSampleGP <- MASS::mvrnorm(n = 1, mu = meanGP, Sigma = covGP) # plot(c(observation, samplesGP))
+    }, error = function(e) {
+      errorIterations[indexSample] <- 1
+      iSampleGP <- rep(NA, 2*sizePrediction)
+    })
+    
+    sampleProjections[,indexSample] <- iSampleGP
+    #sampleDerivatives[,indexSample] <- iSampleGR
+  }
+  
+  if(sum(errorIterations) > 0) warning("Sigma not positive definite for ", sum(errorIterations), " samples out of ", sizeSample)
+  
+  # ---------------------------------------------------- #
+  #                SAMPLES DERIVATIVE/GR                 #
+  # ---------------------------------------------------- #
+  
+  # We are not sampling from GR in this case, but using finite differences with the sampled GP
+  sampleDerivatives <- getGrowthFromSamples(matrixSampleDays = rbind(matrixSampleGP, sampleProjections))[predInterval,]
+  
+  # Transform derivatives to GR
+  samplesGR <- getSamplesGrowthRate(matrixSampleGP = sampleProjections,
+                                    matrixSampleGPDerivative = sampleDerivatives,
+                                    parametersModel = parametersModel)
+  
+  # ---------------------------------------------------- #
+  #                    SAMPLES BOUNDARY                  #
+  # ---------------------------------------------------- #
+  
+  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
+  if(parametersModel$config$derivativeFromGP == F){
+    projectionGR_onBoundary <- NA
+    #projectionGR_onBoundary <- rep(0, sizeSample) #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
     # TODO compute GR on boundary (derivative + transformation)
   }else{
     projectionGR_onBoundary <- NA
@@ -294,8 +313,7 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
                                         dayId = currentDayId,
                                         sample = 1:parametersModel$config$sizeSample,
                                         gr = projectionSamplesGP$projectionGR_onBoundary)
-    tableProjections_boundary <- tableSamples_boundary[, .(gr_q025 = quantile(gr, 0.025, na.rm = T), gr_q25 = quantile(gr, 0.25, na.rm = T),
-                                                           gr_median = quantile(gr, 0.5, na.rm = T),
+    tableProjections_boundary <- tableSamples_boundary[, .(gr_q025 = quantile(gr, 0.025, na.rm = T), gr_q25 = quantile(gr, 0.25, na.rm = T), gr_median = quantile(gr, 0.5, na.rm = T),
                                                            gr_q75 = quantile(gr, 0.75, na.rm = T), gr_q975 = quantile(gr, 0.975, na.rm = T)),
                                                        .(dayId, lastDayId)]
     # Add extras to the projection table
@@ -444,8 +462,6 @@ plotProjection <- function(listProjection, outputModel, parametersModel, futureT
   }
   
   # Plot
-  if(parametersModel$params$linkType == "NB") countTableAll[, toPlot := positiveResults]
-  if(parametersModel$params$linkType == "BB") countTableAll[, toPlot := ratio]
   #jointDatesTrick <- rbind(outputModel$dateList$dateTable, dataToPlotAfter[, .(dayId, date)])
   ggP1 <- ggplot(dataToPlotBeforeGP, aes(x = date)) + theme_laura() +
     #geom_vline(xintercept = lockdownDates, linetype = 2, colour = "gray50") +
@@ -460,7 +476,7 @@ plotProjection <- function(listProjection, outputModel, parametersModel, futureT
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.title.x = element_blank()) +
     #if(linkType == "BB") gg9.1 <- gg9.1p +
     geom_point(data = countTableAll,
-               aes(y = toPlot, colour = weekdays(date) %in% c("Saturday", "Sunday"), shape = weekdays(date) %in% c("Saturday", "Sunday")), show.legend = F, size = 1) +
+               aes(y = positiveResults, colour = weekdays(date) %in% c("Saturday", "Sunday"), shape = weekdays(date) %in% c("Saturday", "Sunday")), show.legend = F, size = 1) +
     scale_colour_manual(values = c("black", "#D41B19")) +
     #labs(title = paste0(partitionToPlot, " - Gaussian process (positive cases/number of tests)"), x = "day", y = "relative effect of GP (positive cases/number of tests)")
     labs(x = "day", y = "posterior fitting", title = listProjection$nameProjection)
@@ -533,4 +549,13 @@ compareProjections <- function(projectionsList, scoringList, positivesVector){
   }
   return(do.call("rbind", outputList))
 }
+
+# ??? ----
+
+rationalQuadraticMatrixFn <- function(sigma, l, a, sqrInputMatrix){
+  value <- sigma*(1 + sqrInputMatrix/(2*a*l^2))^(-a)
+  return(value)
+}
+
+
 
