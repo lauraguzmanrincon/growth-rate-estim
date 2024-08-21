@@ -1,4 +1,5 @@
-# From W01.R
+
+# Compute projection ----
 
 # TODO write function to create empty projection object (to compare other non-GP models)
 # OR create simpler object that accommodates all types of projections (non-GP ones)
@@ -9,9 +10,58 @@
 # daysForPrediction:
 # testingVector: tests in the future days to project
 
-#' 20.09.2023 - code adapted from getGrowthFromSamples_GP() ... Key: find d1Matrix and dMatrixAll
-#'  currentDayId: Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
-getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+#' Title
+#' 
+#' Wrapper for projection using different GPs
+#'
+#' @param outputModel 
+#' @param currentDate Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
+#' @param sizePrediction 
+#' @param daysForPrediction 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+getProjectionGP <- function(outputModel, currentDate, sizePrediction, daysForPrediction){
+  
+  if(outputModel$inferenceSettings$inferenceType == "LA-INLA"){
+    # Only matern12 is available for INLA
+    output <- getProjectionGP_matern12(outputModel = outputModel,
+                                       currentDate = currentDate,
+                                       sizePrediction = sizePrediction,
+                                       daysForPrediction = daysForPrediction)
+  }else if(outputModel$inferenceSettings$inferenceType == "MCMC-STAN"){
+    covarianceFunction <- rationalQuadraticMatrixFn # Only one available for now
+    output <- getProjectionGP_covInput(outputModel = outputModel,
+                                           currentDate = currentDate,
+                                           sizePrediction = sizePrediction,
+                                           daysForPrediction = daysForPrediction,
+                                           covarianceFunction = covarianceFunction)
+  }else if(outputModel$inferenceSettings$inferenceType == "MCMC-Int"){
+    # TODO
+    output <- NULL
+  }else{
+    stop("Invalid inferenceType")
+  }
+  
+  return(output)
+}
+
+
+#' Title
+#' 
+#'
+#' @param outputModel 
+#' @param currentDate Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
+#' @param sizePrediction 
+#' @param daysForPrediction 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+getProjectionGP_matern12 <- function(outputModel, currentDate, sizePrediction, daysForPrediction){
   
   if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
   
@@ -34,8 +84,8 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
   
   # Get basis parameters
   vGP <- 2 - 1/2
-  sigma0 <- parametersModel$GPcovarianceList$theta0[1]
-  range0 <- 2*parametersModel$GPcovarianceList$theta0[2]
+  sigma0 <- outputModel$parametersModel$GPcovarianceList$theta0[1]
+  range0 <- 2*outputModel$parametersModel$GPcovarianceList$theta0[2]
   
   # Compute auxiliar vectors
   sig2Vector <- (sigma0*exp(outputModel$matrixSampleHyperparameters["logParam1",]))^2
@@ -100,21 +150,21 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
   
   # sampleDerivatives already computed from the GP above
   # We do it again if derivative is calculated from approximation
-  if(parametersModel$config$derivativeFromGP == F){
-    sampleDerivatives <- getGrowthFromSamples(matrixSampleDays = rbind(matrixSampleGP, sampleProjections))[predInterval,]
+  if(outputModel$inferenceSettings$derivativeFromGP == F){
+    sampleDerivatives <- getSamplesGPDerivative_approx(matrixSampleGP = rbind(matrixSampleGP, sampleProjections))[predInterval,]
   }
   
   # Transform derivatives to GR
   samplesGR <- getSamplesGrowthRate(matrixSampleGP = sampleProjections,
                                     matrixSampleGPDerivative = sampleDerivatives,
-                                    parametersModel = parametersModel)
+                                    parametersModel = outputModel$parametersModel)
   
   # ---------------------------------------------------- #
   #                    SAMPLES BOUNDARY                  #
   # ---------------------------------------------------- #
   
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F){
+  if(outputModel$inferenceSettings$derivativeFromGP == F){
     projectionGR_onBoundary <- rep(0, sizeSample) #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
     # TODO compute GR on boundary (derivative + transformation)
   }else{
@@ -127,7 +177,19 @@ getProjectionGP_matern12 <- function(parametersModel, outputModel, currentDate, 
               sizePrediction = sizePrediction))
 }
 
-getProjectionGP_RQ <- function(parametersModel, outputModel, currentDate, sizePrediction, daysForPrediction){
+#' Title
+#'
+#' @param outputModel 
+#' @param currentDate Last observed day to compute the projection. Recommended to be outputModel$dateList$maxDay
+#' @param sizePrediction 
+#' @param daysForPrediction 
+#' @param covarianceFunction Function with three inputs: params, inputMatrix, sqrInputMatrix
+#'
+#' @return
+#' @export
+#'
+#' @examples
+getProjectionGP_covInput <- function(outputModel, currentDate, sizePrediction, daysForPrediction, covarianceFunction){
   
   if(outputModel$dateList$numDays < daysForPrediction) warning("daysForPrediction is longer than available observations.")
   
@@ -144,12 +206,14 @@ getProjectionGP_RQ <- function(parametersModel, outputModel, currentDate, sizePr
   # Compute distance matrix for ordered days
   pastInterval <- 1:numDaysPast
   predInterval <- (numDaysPast + 1):(numDaysPast + sizePrediction)
-  #relativeDistanceMatrixObsObs <- outer(X = pastInterval, Y = pastInterval, FUN = "-")
-  #relativeDistanceMatrixPredObs <- outer(X = predInterval, Y = pastInterval, FUN = "-")
-  #relativeDistanceMatrixPredPred <- outer(X = predInterval, Y = predInterval, FUN = "-")
-  sqrDistanceMatrixObsObs <- outer(X = pastInterval, Y = pastInterval, FUN = "-")^2
-  sqrDistanceMatrixPredObs <- outer(X = predInterval, Y = pastInterval, FUN = "-")^2
-  sqrDistanceMatrixPredPred <- outer(X = predInterval, Y = predInterval, FUN = "-")^2
+  relativeDistanceMatrixObsObs <- outer(X = pastInterval, Y = pastInterval, FUN = "-")
+  relativeDistanceMatrixPredObs <- outer(X = predInterval, Y = pastInterval, FUN = "-")
+  relativeDistanceMatrixPredPred <- outer(X = predInterval, Y = predInterval, FUN = "-")
+  sqrDistanceMatrixObsObs <- relativeDistanceMatrixObsObs^2
+  sqrDistanceMatrixPredObs <- relativeDistanceMatrixPredObs^2
+  sqrDistanceMatrixPredPred <- relativeDistanceMatrixPredPred^2
+  
+  numParameters <- nrow(outputModel$matrixSampleHyperparameters) - 2
   
   # ---------------------------------------------------- #
   #                  PRODUCE SAMPLES                     #
@@ -159,14 +223,12 @@ getProjectionGP_RQ <- function(parametersModel, outputModel, currentDate, sizePr
   #sampleDerivatives <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
   errorIterations <- rep(0, sizeSample)
   for(indexSample in 1:sizeSample){
-    lengthValue <- exp(outputModel$matrixSampleHyperAll["logParam1", indexSample])
-    sigmaVal <- exp(outputModel$matrixSampleHyperAll["logParam2", indexSample])
-    alphaVal <- exp(outputModel$matrixSampleHyperAll["logParam3", indexSample])
+    paramSample <- sapply(X = paste("logParam", 1:numParameters, sep = ""), FUN = function(colname) exp(outputModel$matrixSampleHyperparameters[colname, indexSample]))
     
     # Can we done in one but maybe saves space/time?
-    covarianceObsObs <- rationalQuadraticMatrixFn(sigma = sigmaVal, l = lengthValue, a = alphaVal, sqrInputMatrix = sqrDistanceMatrixObsObs) + 0.00001*diag(numDaysPast)
-    covariancePredObs <- rationalQuadraticMatrixFn(sigma = sigmaVal, l = lengthValue, a = alphaVal, sqrInputMatrix = sqrDistanceMatrixPredObs)
-    covariancePredPred <- rationalQuadraticMatrixFn(sigma = sigmaVal, l = lengthValue, a = alphaVal, sqrInputMatrix = sqrDistanceMatrixPredPred)
+    covarianceObsObs <- covarianceFunction(params = paramSample, inputMatrix = relativeDistanceMatrixObsObs, sqrInputMatrix = sqrDistanceMatrixObsObs) + 0.00001*diag(numDaysPast)
+    covariancePredObs <- covarianceFunction(params = paramSample, inputMatrix = relativeDistanceMatrixObsObs, sqrInputMatrix = sqrDistanceMatrixPredObs)
+    covariancePredPred <- covarianceFunction(params = paramSample, inputMatrix = relativeDistanceMatrixObsObs, sqrInputMatrix = sqrDistanceMatrixPredPred)
     observation <- matrixSampleGP[, indexSample]
     
     importance <- covariancePredObs%*%chol2inv(chol(covarianceObsObs))
@@ -190,19 +252,19 @@ getProjectionGP_RQ <- function(parametersModel, outputModel, currentDate, sizePr
   # ---------------------------------------------------- #
   
   # We are not sampling from GR in this case, but using finite differences with the sampled GP
-  sampleDerivatives <- getGrowthFromSamples(matrixSampleDays = rbind(matrixSampleGP, sampleProjections))[predInterval,]
+  sampleDerivatives <- getSamplesGPDerivative_approx(matrixSampleGP = rbind(matrixSampleGP, sampleProjections))[predInterval,]
   
   # Transform derivatives to GR
   samplesGR <- getSamplesGrowthRate(matrixSampleGP = sampleProjections,
                                     matrixSampleGPDerivative = sampleDerivatives,
-                                    parametersModel = parametersModel)
+                                    parametersModel = outputModel$parametersModel)
   
   # ---------------------------------------------------- #
   #                    SAMPLES BOUNDARY                  #
   # ---------------------------------------------------- #
   
   # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F){
+  if(outputModel$inferenceSettings$derivativeFromGP == F){
     projectionGR_onBoundary <- NA
     #projectionGR_onBoundary <- rep(0, sizeSample) #projectionGR_onBoundary <- c(tempDerivative[daysForPrediction,])
     # TODO compute GR on boundary (derivative + transformation)
@@ -216,46 +278,61 @@ getProjectionGP_RQ <- function(parametersModel, outputModel, currentDate, sizePr
               sizePrediction = sizePrediction))
 }
 
+
+#' Title
+#' 
 #' Function for projections that provide a GP and a GR !!!
 #' Creates a table with samples for relevant parameters plus median, 95% CI for model posterior
 #' testingVector: vector of length projectionSamplesGP$sizePrediction with testing (for proportions model)
 #' TODO this is if we give GP and GR as inputs... maybe we'll need something more general?
-createTableProjection <- function(projectionSamplesGP, outputModel, parametersModel, nameProjection, testingVector = NULL){
+#'
+#' @param projectionSamplesGP 
+#' @param outputModel 
+#' @param nameProjection 
+#' @param testingVector 
+#'
+#' @return TableProjection object
+#' @export
+#'
+#' @examples
+createTableProjection <- function(projectionSamplesGP, outputModel, nameProjection, testingVector = NULL){
   # Check input
-  if(parametersModel$params$linkType == "BB" & is.null(testingVector)) stop("testingVector is required for the proportions model")
+  if(outputModel$parametersModel$linkType == "BB" & is.null(testingVector)) stop("testingVector is required for the proportions model")
+  
+  internalConstants <- getInternalSettings()
   
   # Auxiliar variables
+  sizeSample <- outputModel$numSamples
   sizePrediction <- nrow(projectionSamplesGP$projectionGP)
-  levelsWeek <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
   currentDayId <- outputModel$dateList$dateTable[date == projectionSamplesGP$currentDate, dayId]
+  
+  # ---------------------------------------------------- #
+  #                CREATE SAMPLES TABLE                  #
+  # ---------------------------------------------------- #
   
   # Create matrices of parameters
   # TODO same as in computePosteriors()... Unify!
-  if(parametersModel$params$randomEffect == "weekday"){
+  if(outputModel$parametersModel$randomEffect == "weekday"){
     predictionWeekday <- weekdays(projectionSamplesGP$currentDate + (1:sizePrediction))
-    matrixRandomEffect <- outputModel$matrixSampleRandomEffect[match(predictionWeekday, levelsWeek),]
-  }else if(parametersModel$params$randomEffect == "all"){
-    matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = parametersModel$config$sizeSample)
+    matrixRandomEffect <- outputModel$matrixSampleRandomEffect[match(predictionWeekday, internalConstants$levelsWeek),]
+  }else if(outputModel$parametersModel$randomEffect == "all"){
+    matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
   }else{
-    matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = parametersModel$config$sizeSample)
+    matrixRandomEffect <- matrix(0, nrow = sizePrediction, ncol = sizeSample)
   }
   matrixSampleOverdisp <- outputModel$matrixSampleHyper[c("overdispersion"),]
   matrixIntercept <- matrix(outputModel$matrixSampleIntercept,
-                            nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = T)
+                            nrow = sizePrediction, ncol = sizeSample, byrow = T)
   etaSample <- matrixIntercept + projectionSamplesGP$projectionGP + matrixRandomEffect
-  rhoSample <- matrix(matrixSampleOverdisp, nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = T)
-  
-  #ERROR2 matrixIntercept <- 0
+  rhoSample <- matrix(matrixSampleOverdisp, nrow = sizePrediction, ncol = sizeSample, byrow = T)
   
   # Create projection table with samples of relevant model parameters
-  if(parametersRun$params$linkType == "NB"){
+  if(outputModel$parametersModel$linkType == "NB"){
     mupSample <- exp(etaSample)
     gpTransSample <- exp(matrixIntercept + projectionSamplesGP$projectionGP)
     tableSamples <- data.table(lastDayId = currentDayId,
                                dayId = currentDayId + (1:sizePrediction),
-                               sample = rep(1:parametersModel$config$sizeSample, each = sizePrediction),
-                               #dayId = rep(currentDayId + (1:sizePrediction), each = parametersModel$config$sizeSample), # BUG!!!
-                               #sample = 1:parametersModel$config$sizeSample, # BUG!!!
+                               sample = rep(1:sizeSample, each = sizePrediction),
                                gp = c(projectionSamplesGP$projectionGP),
                                gr = c(projectionSamplesGP$projectionGR),
                                gpConsTrans = c(gpTransSample),
@@ -270,11 +347,11 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
     # Recall: mup = a/(a+b), rho = 1/(a+b+1). See Other_files/.../NLADoc_betabinomial.pdf or inla.doc("betabinomial")
     aS <- mupSample*(1 - rhoSample)/rhoSample
     bS <- (mupSample*rhoSample - mupSample - rhoSample + 1)/rhoSample
-    pS <- matrix(mapply(function(a,b) rbeta(1, a, b), aS, bS), nrow = sizePrediction, ncol = parametersModel$config$sizeSample, byrow = F)
+    pS <- matrix(mapply(function(a,b) rbeta(1, a, b), aS, bS), nrow = sizePrediction, ncol = sizeSample, byrow = F)
     
     tableSamples <- data.table(lastDayId = currentDayId,
                                dayId = currentDayId + (1:sizePrediction),
-                               sample = rep(1:parametersModel$config$sizeSample, each = sizePrediction),
+                               sample = rep(1:sizeSample, each = sizePrediction),
                                gp = c(projectionSamplesGP$projectionGP),
                                gr = c(projectionSamplesGP$projectionGR),
                                gpConsTrans = c(gpTransSample),
@@ -293,49 +370,71 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
   tableSamples[, date := dateLastDay + dayId - lastDayId]
   
   # Add tests to the samples table (relevant for BB)
-  if(parametersRun$params$linkType == "NB"){
+  if(outputModel$parametersModel$linkType == "NB"){
     tableSamples[, numberTest := NA]
   }else{
     tableSamples[order(dayId), numberTest := testingVector[dayId - lastDayId]]
   }
   
   # Compute median and 95% CI of model posterior and add it to samples table
-  if(parametersRun$params$linkType == "NB"){
+  if(outputModel$parametersModel$linkType == "NB"){
     tableSamples[, yS := rnbinom(n = nrow(tableSamples), size = rho, mu = mu)]
   }else{
     tableSamples[, yS := rbinom(n = nrow(tableSamples), size = numberTest, prob = pp)] # eg. rbinom(n = 21, size = c(2,30), c(0.1,0.9))
   }
   
+  # ---------------------------------------------------- #
+  #                CREATE SUMMARY TABLE                  #
+  # ---------------------------------------------------- #
   # Create tableProjections with quantiles of every relevant parameter
-  tableProjections <- tableSamples[, .(gp_q025 = quantile(gp, 0.025), gp_q25 = quantile(gp, 0.25), gp_median = quantile(gp, 0.5),
-                                       gp_q75 = quantile(gp, 0.75), gp_q975 = quantile(gp, 0.975),
+  tableProjections <- tableSamples[, .(gp_q025 = quantile(gp, 0.025),
+                                       gp_q25 = quantile(gp, 0.25),
+                                       gp_median = quantile(gp, 0.5),
+                                       gp_q75 = quantile(gp, 0.75),
+                                       gp_q975 = quantile(gp, 0.975),
                                        #
-                                       gr_q025 = quantile(gr, 0.025, na.rm = T), gr_q25 = quantile(gr, 0.25, na.rm = T), gr_median = quantile(gr, 0.5, na.rm = T),
-                                       gr_q75 = quantile(gr, 0.75, na.rm = T), gr_q975 = quantile(gr, 0.975, na.rm = T),
+                                       gr_q025 = quantile(gr, 0.025, na.rm = T),
+                                       gr_q25 = quantile(gr, 0.25, na.rm = T),
+                                       gr_median = quantile(gr, 0.5, na.rm = T),
+                                       gr_q75 = quantile(gr, 0.75, na.rm = T),
+                                       gr_q975 = quantile(gr, 0.975, na.rm = T),
                                        #
-                                       gpConsTrans_q025 = quantile(gpConsTrans, 0.025), gpConsTrans_q25 = quantile(gpConsTrans, 0.25),
+                                       gpConsTrans_q025 = quantile(gpConsTrans, 0.025),
+                                       gpConsTrans_q25 = quantile(gpConsTrans, 0.25),
                                        gpConsTrans_median = quantile(gpConsTrans, 0.5),
-                                       gpConsTrans_q75 = quantile(gpConsTrans, 0.75), gpConsTrans_q975 = quantile(gpConsTrans, 0.975),
+                                       gpConsTrans_q75 = quantile(gpConsTrans, 0.75),
+                                       gpConsTrans_q975 = quantile(gpConsTrans, 0.975),
                                        #
-                                       eta_q025 = quantile(eta, 0.025), eta_q25 = quantile(eta, 0.25), eta_median = quantile(eta, 0.5),
-                                       eta_q75 = quantile(eta, 0.75), eta_q975 = quantile(eta, 0.975),
+                                       eta_q025 = quantile(eta, 0.025),
+                                       eta_q25 = quantile(eta, 0.25),
+                                       eta_median = quantile(eta, 0.5),
+                                       eta_q75 = quantile(eta, 0.75),
+                                       eta_q975 = quantile(eta, 0.975),
                                        #
-                                       mu_q025 = quantile(mu, 0.025), mu_q25 = quantile(mu, 0.25),
-                                       mu_median = quantile(mu, 0.5), mu_q75 = quantile(mu, 0.75), mu_q975 = quantile(mu, 0.975),
+                                       mu_q025 = quantile(mu, 0.025),
+                                       mu_q25 = quantile(mu, 0.25),
+                                       mu_median = quantile(mu, 0.5),
+                                       mu_q75 = quantile(mu, 0.75),
+                                       mu_q975 = quantile(mu, 0.975),
                                        #
-                                       yS_q025 = quantile(yS, 0.025, na.rm = T), yS_q25 = quantile(yS, 0.25, na.rm = T),
+                                       yS_q025 = quantile(yS, 0.025, na.rm = T),
+                                       yS_q25 = quantile(yS, 0.25, na.rm = T),
                                        yS_median = quantile(yS, 0.5, na.rm = T),
-                                       yS_q75 = quantile(yS, 0.75, na.rm = T), yS_q975 = quantile(yS, 0.975, na.rm = T)),
+                                       yS_q75 = quantile(yS, 0.75, na.rm = T),
+                                       yS_q975 = quantile(yS, 0.975, na.rm = T)),
                                    .(dayId, date, lastDayId, dateLastDay, numberTest)]
   
   # Add GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F){
+  if(outputModel$inferenceSettings$derivativeFromGP == F){
     tableSamples_boundary <- data.table(lastDayId = currentDayId,
                                         dayId = currentDayId,
-                                        sample = 1:parametersModel$config$sizeSample,
+                                        sample = 1:sizeSample,
                                         gr = projectionSamplesGP$projectionGR_onBoundary)
-    tableProjections_boundary <- tableSamples_boundary[, .(gr_q025 = quantile(gr, 0.025, na.rm = T), gr_q25 = quantile(gr, 0.25, na.rm = T), gr_median = quantile(gr, 0.5, na.rm = T),
-                                                           gr_q75 = quantile(gr, 0.75, na.rm = T), gr_q975 = quantile(gr, 0.975, na.rm = T)),
+    tableProjections_boundary <- tableSamples_boundary[, .(gr_q025 = quantile(gr, 0.025, na.rm = T),
+                                                           gr_q25 = quantile(gr, 0.25, na.rm = T),
+                                                           gr_median = quantile(gr, 0.5, na.rm = T),
+                                                           gr_q75 = quantile(gr, 0.75, na.rm = T),
+                                                           gr_q975 = quantile(gr, 0.975, na.rm = T)),
                                                        .(dayId, lastDayId)]
     # Add extras to the projection table
     setkey(tableProjections_boundary, lastDayId)
@@ -346,33 +445,57 @@ createTableProjection <- function(projectionSamplesGP, outputModel, parametersMo
     setkey(tableProjections_boundary, dayId)
     setkey(outputModel$posteriorTransfGP, dayId)
     tableProjections_boundary[outputModel$posteriorTransfGP, ":="(numberTest = i.numberTest,
-                                                     gp_q025 = i.q0.025_GP, gp_q25 = i.q0.25_GP, gp_median = i.median_GP, gp_q75 = i.q0.75_GP, gp_q975 = i.q0.975_GP,
-                                                     #gpTrans_q025 = i.q0.025FT, gpTrans_q25 = i.q0.25FT, gpTrans_median = i.medianFT,
-                                                     #gpTrans_q75 = i.q0.75FT, gpTrans_q975 = i.q0.975FT) # removed 19.09.2023
-                                                     gpConsTrans_q025 = i.q0.025_transConsGP, gpConsTrans_q25 = i.q0.25_transConsGP,
+                                                     gp_q025 = i.q0.025_GP,
+                                                     gp_q25 = i.q0.25_GP,
+                                                     gp_median = i.median_GP,
+                                                     gp_q75 = i.q0.75_GP,
+                                                     gp_q975 = i.q0.975_GP,
+                                                     gpConsTrans_q025 = i.q0.025_transConsGP,
+                                                     gpConsTrans_q25 = i.q0.25_transConsGP,
                                                      gpConsTrans_median = i.median_transConsGP,
-                                                     gpConsTrans_q75 = i.q0.75_transConsGP, gpConsTrans_q975 = i.q0.975_transConsGP)]
+                                                     gpConsTrans_q75 = i.q0.75_transConsGP,
+                                                     gpConsTrans_q975 = i.q0.975_transConsGP)]
     # TODO Double-check the above correct!!!!
   }else{
     tableSamples_boundary <- NA
     tableProjections_boundary <- NA
   }
     
-  return(list(tableProjections = tableProjections, tableSamples = tableSamples,
-              tableProjections_boundary = tableProjections_boundary, tableSamples_boundary = tableSamples_boundary,
-              currentDate = projectionSamplesGP$currentDate, sizePrediction = sizePrediction, nameProjection = nameProjection))
+  return(list(tableProjections = tableProjections,
+              tableSamples = tableSamples,
+              tableProjections_boundary = tableProjections_boundary,
+              tableSamples_boundary = tableSamples_boundary,
+              currentDate = projectionSamplesGP$currentDate,
+              sizePrediction = sizePrediction,
+              nameProjection = nameProjection))
 }
 
 
+
+#' Title
+#' 
 #' Creates projection under null model (future observations are in 95% CI of normal around latest observations/proportion avg and sd = sdPast)
 #' daysForPrediction: days before currentDate defined as 'latest observations'/'tests'
 #' TODO caveat: quantiles from samples could be calculated with the qnorm function instead of using tableSample, but it's more practical to provide samples
-createTableProjectionNull <- function(outputModel, parametersModel, currentDate,
-                                      sizePrediction, daysForPrediction = 7, testingVector = NULL){
+#'
+#' @param outputModel 
+#' @param currentDate 
+#' @param sizePrediction 
+#' @param daysForPrediction 
+#' @param nameProjection 
+#' @param testingVector 
+#'
+#' @return TableProjection object
+#' @export
+#'
+#' @examples
+createTableProjectionNull <- function(outputModel, currentDate,
+                                      sizePrediction, daysForPrediction = 7, nameProjection, testingVector = NULL){
   # Check input
-  if(parametersModel$params$linkType == "BB" & is.null(testingVector)) stop("testingVector is required for the proportions model")
+  if(outputModel$parametersModel$linkType == "BB" & is.null(testingVector)) stop("testingVector is required for the proportions model")
   if(is.null(testingVector)) testingVector <- rep(NA, sizePrediction)
   
+  sizeSample <- outputModel$numSamples
   currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
   casesBeforePrediction <- outputModel$dataForModel[date > currentDate - daysForPrediction & date <= currentDate][order(date), positiveResults]
   testsBeforePrediction <- outputModel$dataForModel[date > currentDate - daysForPrediction & date <= currentDate][order(date), numberTest]
@@ -383,21 +506,27 @@ createTableProjectionNull <- function(outputModel, parametersModel, currentDate,
                              lastDayId = currentDayId,
                              dateLastDay = currentDate,
                              numberTest = testingVector)
-  overviewNull[, ":="(gp_q025 = as.numeric(NA), gp_q25 = as.numeric(NA), gp_median = as.numeric(NA), gp_q75 = as.numeric(NA), gp_q975 = as.numeric(NA),
+  overviewNull[, ":="(gp_q025 = as.numeric(NA),
+                      gp_q25 = as.numeric(NA),
+                      gp_median = as.numeric(NA),
+                      gp_q75 = as.numeric(NA),
+                      gp_q975 = as.numeric(NA),
                       #
-                      gr_q025 = 0, gr_q25 = 0, gr_median = 0, gr_q75 = 0, gr_q975 = 0,
+                      gr_q025 = 0,
+                      gr_q25 = 0,
+                      gr_median = 0,
+                      gr_q75 = 0,
+                      gr_q975 = 0,
                       #
-                      gpConsTrans_q025 = as.numeric(NA), gpConsTrans_q25 = as.numeric(NA), gpConsTrans_median = as.numeric(NA),
-                      gpConsTrans_q75 = as.numeric(NA), gpConsTrans_q975 = as.numeric(NA)
-                      #gpTrans_q025 = pmax(0, qnorm(0.025, mean = positiveResultsLastDay, sd = sdPast)),
-                      #gpTrans_q25 = pmax(0, qnorm(0.25, mean = positiveResultsLastDay, sd = sdPast)),
-                      #gpTrans_median = positiveResultsLastDay,
-                      #gpTrans_q75 = pmax(0, qnorm(0.75, mean = positiveResultsLastDay, sd = sdPast)),
-                      #gpTrans_q975 = pmax(0, qnorm(0.975, mean = positiveResultsLastDay, sd = sdPast)),
+                      gpConsTrans_q025 = as.numeric(NA),
+                      gpConsTrans_q25 = as.numeric(NA),
+                      gpConsTrans_median = as.numeric(NA),
+                      gpConsTrans_q75 = as.numeric(NA),
+                      gpConsTrans_q975 = as.numeric(NA)
                       )]
   
   # Compute yS
-  if(parametersModel$params$linkType == "NB"){
+  if(outputModel$parametersModel$linkType == "NB"){
     #alphaIS <- 0.05
     #positiveResultsLastDay <- casesBeforePrediction[daysForPrediction] # around current observation
     positiveResultsLastDay <- round(mean(casesBeforePrediction)) # around latest observations avg
@@ -419,116 +548,73 @@ createTableProjectionNull <- function(outputModel, parametersModel, currentDate,
   }
   
   # Copy y into gpConsTrans for visualisation purposes
-  overviewNull[, ":="(gpConsTrans_median = yS_median, gpConsTrans_q025 = yS_q025, gpConsTrans_q975 = yS_q975,
-                     gpConsTrans_q25 = yS_q25, gpConsTrans_q75 = yS_q75)]
+  overviewNull[, ":="(gpConsTrans_median = yS_median,
+                      gpConsTrans_q025 = yS_q025,
+                      gpConsTrans_q975 = yS_q975,
+                      gpConsTrans_q25 = yS_q25,
+                      gpConsTrans_q75 = yS_q75)]
   
   # Table samples output - artificial samples that can be useful when using scoring functions (see caveat in description)
-  # Number of samples = parametersModel$config$sizeSample
-  tableSamples <- CJ(dayId = currentDayId + 1:sizePrediction, sample = 1:parametersModel$config$sizeSample)
+  tableSamples <- CJ(dayId = currentDayId + 1:sizePrediction, sample = 1:sizeSample)
   setkey(tableSamples, dayId)
   setkey(overviewNull, dayId)
   tableSamples[overviewNull, ":="(lastDayId = lastDayId, date = date, dateLastDay = dateLastDay, numberTest = numberTest)]
   
   # Produce samples
-  if(parametersModel$params$linkType == "NB"){
+  if(outputModel$parametersModel$linkType == "NB"){
     # TODO this might produce a warning if casesBeforePrediction are unknown
-    tableSamples[, yS := rnorm(n = sizePrediction*parametersModel$config$sizeSample, mean = positiveResultsLastDay, sd = sdPast)]
+    tableSamples[, yS := rnorm(n = sizePrediction*sizeSample, mean = positiveResultsLastDay, sd = sdPast)]
   }else{
-    tableSamples[, yS := numberTest*pmax(0, pmin(1, rnorm(n = sizePrediction*parametersModel$config$sizeSample, mean = proportionsLastDay, sd = sdPast)))]
+    tableSamples[, yS := numberTest*pmax(0, pmin(1, rnorm(n = sizePrediction*sizeSample, mean = proportionsLastDay, sd = sdPast)))]
   }
   
-  return(list(tableProjections = overviewNull, tableSamples = tableSamples,
-              currentDate = currentDate, sizePrediction = sizePrediction, nameProjection = "null"))
+  return(list(tableProjections = overviewNull,
+              tableSamples = tableSamples,
+              currentDate = currentDate,
+              sizePrediction = sizePrediction,
+              nameProjection = nameProjection))
 }
 
-#' Plots posterior of GP and model fitting before the last observation date (30 days before as default) and after the size of the projection
-#' listProjection: output of createTableProjection...()
-#' outputModel:
-#' parametersModel:
-#' minDate (optional): min date for plot
-#' futureTable (optiona): data from the future for comparison (date, positiveResults, numberTest)
-#' TODO requires additional package: ggtree
-plotProjection <- function(listProjection, outputModel, parametersModel, futureTable = NULL, minDate = NULL, plotGP = F){
-  # TODO make better plot
-  if(is.null(minDate)) minDate <- listProjection$currentDate - 30
-  sizePrediction <- listProjection$sizePrediction
-  maxDate <- listProjection$currentDate + sizePrediction
-  
-  # Create auxiliar tables
-  countTableAll <- outputModel$dataForModel[date >= minDate & date <= maxDate, .(date, positiveResults, numberTest)]
-  if(!is.null(futureTable)) countTableAll <- rbind(countTableAll, futureTable)
-  countTableAll[, ratio := pmin(1, pmax(0, positiveResults/numberTest))]
-  
-  currentDate <- listProjection$currentDate
-  currentDayId <- outputModel$dateList$dateTable[date == currentDate, dayId]
-  
-  dataToPlotBeforeGP <- outputModel$posteriorTransfGP[date >= minDate & date <= maxDate] #[dayId %in% (currentDayId - (0:30))]
-  dataToPlotBeforeGR <- outputModel$posteriorGrowth[date >= minDate & date <= maxDate] #[dayId %in% (currentDayId - (0:30))]
-  dataToPlotAfter <- listProjection$tableProjections
-  
-  # Recover GR on last day of observation if not provided by model (when GP from finite differences)
-  if(parametersModel$config$derivativeFromGP == F & !is.null(listProjection$tableProjections_boundary)){
-    setkey(dataToPlotBeforeGR, dayId)
-    setkey(listProjection$tableProjections_boundary, dayId)
-    dataToPlotBeforeGR[listProjection$tableProjections_boundary,
-                                ":="(median = i.gr_median, q0.025 = i.gr_q025, q0.975 = i.gr_q975, q0.25 = i.gr_q25, q0.75 = i.gr_q75)]
+# Scoring ----
+
+#' Title
+#'
+#' Function for comparing scores
+#' projectionsList: list of listProjection objects
+#' scoringList: list of tableScore objects
+#' positivesVector: positives observed in the future
+#' TODO add list of optional arguments?
+#' 
+#' @param projectionsList List of TableProjection objects (e.g. output of createTableProjection)
+#' @param scoringList List of TableScore objects
+#' @param positivesVector Numeric verctor of "true positives" observed in the future
+#'
+#' @return
+#' @export
+#'
+#' @examples
+compareProjections <- function(projectionsList, scoringList, positivesVector){
+  outputList <- vector("list", length(projectionsList)*length(projectionsList))
+  for(p in 1:length(projectionsList)){
+    for(s in 1:length(scoringList)){
+      scoreTable <- scoringList[[s]](listProjection = projectionsList[[p]], positivesVector = positivesVector)
+      scoreTable[, nameProjection := projectionsList[[p]]$nameProjection]
+      outputList[[(p - 1)*length(scoringList) + s]] <- scoreTable
+    }
   }
-  
-  # Compute model posterior
-  if(parametersModel$params$linkType == "NB"){
-    dataToPlotAfter[, ":="(yTrans_median = yS_median, yTrans_q025 = yS_q025, yTrans_q975 = yS_q975, yTrans_q25 = yS_q25, yTrans_q75 = yS_q75)]
-  }else{
-    dataToPlotAfter[, ":="(yTrans_median = yS_median/numberTest, yTrans_q025 = yS_q025/numberTest, yTrans_q975 = yS_q975/numberTest,
-                           yTrans_q25 = yS_q25/numberTest, yTrans_q75 = yS_q75/numberTest)]
-  }
-  
-  # Plot
-  #jointDatesTrick <- rbind(outputModel$dateList$dateTable, dataToPlotAfter[, .(dayId, date)])
-  ggP1 <- ggplot(dataToPlotBeforeGP, aes(x = date)) + theme_laura() +
-    #geom_vline(xintercept = lockdownDates, linetype = 2, colour = "gray50") +
-    #geom_line(data = allPosterior[order(sample, date)], aes(y = value, group = sample))
-    geom_ribbon(aes(ymin = q0.025FT, ymax = q0.975FT), fill = "gray70", alpha = 0.5) +
-    geom_ribbon(aes(ymin = q0.25FT, ymax = q0.75FT), fill = "gray40", alpha = 0.5) +
-    geom_line(aes(y = medianFT)) +
-    geom_ribbon(data = dataToPlotAfter, aes(x = date, ymin = yTrans_q025, ymax = yTrans_q975), fill = "#A8D0DB", alpha = 0.5) +
-    geom_ribbon(data = dataToPlotAfter, aes(ymin = yTrans_q25, ymax = yTrans_q75), fill = "#0C7489", alpha = 0.5) +
-    geom_line(data = dataToPlotAfter, aes(y = yTrans_median), colour = "#13505B") +
-    ##scale_x_date(labels = scales::label_date(c("%d %b\n(%Y)", rep("%d %b", length(dateBreaks) - 1))), breaks = dateBreaks) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.title.x = element_blank()) +
-    #if(linkType == "BB") gg9.1 <- gg9.1p +
-    geom_point(data = countTableAll,
-               aes(y = positiveResults, colour = weekdays(date) %in% c("Saturday", "Sunday"), shape = weekdays(date) %in% c("Saturday", "Sunday")), show.legend = F, size = 1) +
-    scale_colour_manual(values = c("black", "#D41B19")) +
-    #labs(title = paste0(partitionToPlot, " - Gaussian process (positive cases/number of tests)"), x = "day", y = "relative effect of GP (positive cases/number of tests)")
-    labs(x = "day", y = "posterior fitting", title = listProjection$nameProjection)
-  ggP2 <- ggplot(dataToPlotBeforeGR, aes(x = date)) + theme_laura() +
-    #geom_vline(xintercept = lockdownDates, linetype = 2, colour = "gray50") +
-    geom_hline(yintercept = 0, linetype = 2, colour = "gray50") +
-    geom_ribbon(aes(ymin = q0.025, ymax = q0.975), fill = "gray70", alpha = 0.5) +
-    geom_ribbon(aes(ymin = q0.25, ymax = q0.75), fill = "gray40", alpha = 0.5) +
-    geom_line(aes(y = median)) +
-    geom_ribbon(data = dataToPlotAfter, aes(ymin = gr_q025, ymax = gr_q975), fill = "#EFDABD", alpha = 0.5) +
-    geom_ribbon(data = dataToPlotAfter, aes(ymin = gr_q25, ymax = gr_q75), fill = "#D7A35B", alpha = 0.5) +
-    geom_line(data = dataToPlotAfter, aes(y = gr_median), colour = "#31220C") +
-    #scale_x_date(labels = scales::label_date(c("%d %b\n(%Y)", rep("%d %b", length(dateBreaks) - 1))), breaks = dateBreaks) +
-    scale_y_continuous(labels = scales::percent_format(accuracy = NULL)) +
-    labs(x = "day", y = "growth rate") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
-  
-  if(plotGP == T){
-    ggP1 <- ggP1 +
-      geom_ribbon(aes(ymin = q0.025_GP, ymax = q0.975_GP), fill = "#EFDABD", alpha = 0.5) +
-      geom_ribbon(aes(ymin = q0.25_GP, ymax = q0.75_GP), fill = "#D7A35B", alpha = 0.5) +
-      geom_line(aes(y = median_GP), colour = "#31220C") +
-      geom_ribbon(data = dataToPlotAfter, aes(ymin = gpConsTrans_q025, ymax = gpConsTrans_q975), fill = "#EFDABD", alpha = 0.5) +
-      geom_ribbon(data = dataToPlotAfter, aes(ymin = gpConsTrans_q25, ymax = gpConsTrans_q75), fill = "#D7A35B", alpha = 0.5) +
-      geom_line(data = dataToPlotAfter, aes(y = gpConsTrans_median), colour = "#31220C")
-  }
-  
-  #return(suppressWarnings(multiplot(ggP1, ggP2, cols = 1)))
-  return(list(ggP1, ggP2))
+  return(do.call("rbind", outputList))
 }
 
+#' Title
+#'
+#' @param listProjection TableProjection object (output of createTableProjection)
+#' @param positivesVector Numeric verctor of "true positives" observed in the future
+#' @param alphaIS 
+#'
+#' @return TableScore object
+#' @export
+#'
+#' @examples
 scoreIS <- function(listProjection, positivesVector, alphaIS = 0.5){
   if(length(positivesVector) != listProjection$sizePrediction) stop("positivesVector should have length equal to the prediction size in listProjection")
   
@@ -542,6 +628,17 @@ scoreIS <- function(listProjection, positivesVector, alphaIS = 0.5){
   return(tableScore[, .(lastDayId, dayId, dateLastDay, date, positiveResults, score, scoreName)])
 }
 
+#' Title
+#'
+#' "A lower DSS indicates a better forecast."
+#' 
+#' @param listProjection TableProjection object (e.g. output of createTableProjection)
+#' @param positivesVector Numeric verctor of "true positives" observed in the future
+#'
+#' @return TableScore object
+#' @export
+#'
+#' @examples
 scoreDSS <- function(listProjection, positivesVector){
   if(length(positivesVector) != listProjection$sizePrediction) stop("positivesVector should have length equal to the prediction size in listProjection")
   
@@ -554,29 +651,9 @@ scoreDSS <- function(listProjection, positivesVector){
   return(tableScore[, .(lastDayId, dayId, dateLastDay, date, positiveResults, score, scoreName)])
 }
 
-#' Function for comparing scores
-#' projectionsList: list of listProjection objects
-#' scoringList: list of tableScore objects
-#' positivesVector: positives observed in the future
-#' TODO add list of optional arguments?
-compareProjections <- function(projectionsList, scoringList, positivesVector){
-  outputList <- vector("list", length(projectionsList)*length(projectionsList))
-  for(p in 1:length(projectionsList)){
-    for(s in 1:length(scoringList)){
-      scoreTable <- scoringList[[s]](listProjection = projectionsList[[p]], positivesVector = positivesVector)
-      scoreTable[, nameProjection := projectionsList[[p]]$nameProjection]
-      outputList[[(p - 1)*length(scoringList) + s]] <- scoreTable
-    }
-  }
-  return(do.call("rbind", outputList))
-}
 
-# ??? ----
 
-rationalQuadraticMatrixFn <- function(sigma, l, a, sqrInputMatrix){
-  value <- sigma*(1 + sqrInputMatrix/(2*a*l^2))^(-a)
-  return(value)
-}
+
 
 
 
