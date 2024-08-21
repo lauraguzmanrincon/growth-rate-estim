@@ -102,6 +102,7 @@ setInferenceSettings <- function(inferenceType = "LA-INLA",
   # Checks
   typeValues <- c("LA-INLA", "MCMC-STAN", "MCMC-Int")
   if(!inferenceType %in% typeValues) stop(paste0("Parameter 'inferenceType' can only take value from '", paste(typeValues, collapse = "','"),"'."))
+  if(warmUp >= numIterations) stop("Parameter 'warmUp' should be an integer less than 'numIterations'")
   
   config <- list(
     inferenceType = inferenceType,
