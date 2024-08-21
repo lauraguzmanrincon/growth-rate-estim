@@ -20,7 +20,8 @@
 #' @export
 #'
 #' @examples
-runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, minDate = NULL, maxDate = NULL, dateList = NULL, saveSamples = T, saveModelObject = F){
+runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings,
+                               minDate = NULL, maxDate = NULL, dateList = NULL, saveSamples = T, saveModelObject = F){
   # TODO check if min dates in countTable are aligned as in unitTime
   # TODO include cases with no date
   
@@ -52,11 +53,13 @@ runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, m
   #                      FIT MODEL                       #
   # ---------------------------------------------------- #
   
+  # TODO add try-catch to return model in case it hasn't worked
   if(inferenceSettings$inferenceType == "LA-INLA"){
     outputInla <- runModelGrowthRate_INLA(dataForModel = dataForModel,
                                           dateList = dateList,
                                           parametersModel = parametersModel,
                                           inferenceSettings = inferenceSettings)
+    outputInla <<- outputInla # TODO remove trick
     output <- processINLAOutput(objectInla = outputInla,
                                 parametersModel = parametersModel,
                                 inferenceSettings = settingsINLA,
@@ -67,6 +70,7 @@ runModelGrowthRate <- function(countTable, parametersModel, inferenceSettings, m
                                           dateList = dateList,
                                           parametersModel = parametersModel,
                                           inferenceSettings = inferenceSettings)
+    outputStan <<- outputStan # TODO remove trick
     output <- processSTANOutput(objectStan = outputStan,
                                 parametersModel = parametersModel,
                                 inferenceSettings = inferenceSettings,
