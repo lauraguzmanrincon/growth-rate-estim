@@ -210,6 +210,11 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
                          matrixSampleIntercept = matrixSampleIntercept,
                          matrixSampleHyperparameters = matrixSampleHyperparameters)
   
+  # Remove redundant data
+  output_main$objectInla$dateList <- NULL
+  output_main$objectInla$dataForModel <- NULL
+  if(saveStanObject == F) output_main$objectInla <- NULL
+  
   if(saveSamples == F){
     output <- output_main
   }else{

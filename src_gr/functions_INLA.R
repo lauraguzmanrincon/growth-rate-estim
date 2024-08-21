@@ -218,7 +218,6 @@ processINLAOutput <- function(objectInla, parametersModel, inferenceSettings, sa
   listPosteriors$posteriorTransfGP[objectInla$dataForModel, ":="(positiveResults = i.positiveResults, numberTest = i.numberTest)]
   
   # Output
-  if(saveInlaObject == F) objectInla <- NULL
   output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth,
                       posteriorTransfGP = listPosteriors$posteriorTransfGP,
                       posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
@@ -226,6 +225,7 @@ processINLAOutput <- function(objectInla, parametersModel, inferenceSettings, sa
                       posteriorHyperparameters = listPosteriors$posteriorHyperparameters,
                       dateList = objectInla$dateList,
                       dataForModel = objectInla$dataForModel,
+                      parametersModel = parametersModel,
                       inferenceSettings = inferenceSettings,
                       objectInla = objectInla)
   output_samples <- list(numSamples = inferenceSettings$numSamples,
@@ -235,6 +235,11 @@ processINLAOutput <- function(objectInla, parametersModel, inferenceSettings, sa
                          matrixSampleIntercept = matrixSampleIntercept,
                          matrixSampleHyperparameters = matrixSampleHyperparameters)
   #output_projection <- list(projectionGP = projectionGP)
+  
+  # Remove redundant data
+  output_main$objectInla$dateList <- NULL
+  output_main$objectInla$dataForModel <- NULL
+  if(saveInlaObject == F) output_main$objectInla <- NULL
   
   if(saveSamples == F){
     output <- output_main
