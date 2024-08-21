@@ -394,3 +394,22 @@ getSamplesGPPlusConstantTransformed <- function(outputModel, parametersModel){
   }
   return(matrixGPConsTrans)
 }
+
+#' Title
+#'
+#' @param params numeric vector with c(sigma, length scale, alpha)
+#' @param inputMatrix 
+#' @param sqrInputMatrix 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+rationalQuadraticMatrixFn <- function(params, inputMatrix, sqrInputMatrix){
+  sigma <- params[1]
+  length <- params[2]
+  alpha <- params[3]
+  value <- sigma*(1 + sqrInputMatrix/(2*alpha*length^2))^(-alpha)
+  return(value)
+}
+
