@@ -102,7 +102,7 @@ runModelGrowthRate_STAN <- function(dataForModel, dateList, parametersModel, inf
   }
   
   # Run model
-  cat("Running model\n")
+  cat("Running model ... \n")
   modelFit <- sampling(modelExec,
                        data = modelData,
                        init = modelInits,
@@ -111,7 +111,9 @@ runModelGrowthRate_STAN <- function(dataForModel, dateList, parametersModel, inf
                        warmup = inferenceSettings$warmUp,
                        thin = inferenceSettings$thinning,
                        seed = c(inferenceSettings$seed + 1),
-                       sample_file = inferenceSettings$sampleFile)
+                       sample_file = inferenceSettings$sampleFile,
+                       include = T,
+                       pars = c("x_t", "w_d", "intercept", ifelse(parametersModel$linkType == "BB", "rho", "eta"), "tau_w", "log_theta_x"))
   # TODO what does STAN do with NA values?
   
   # Create output
@@ -147,10 +149,11 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
   # ---------------------------------------------------- #
   #                      GET SAMPLES                     #
   # ---------------------------------------------------- #
+  cat("Estimating growth rate ... ")
   
   # Samples GP
-  outputFit <- data.table(summary(objectStan$modelFit)$summary, keep.rownames = T)
-  samplesFit <- extract(objectStan$modelFit)
+  #outputFit <- data.table(summary(objectStan$modelFit)$summary, keep.rownames = T)
+  samplesFit <- extract(objectStan$modelFit) # TODO slow
   matrixSampleGP <- t(samplesFit$x_t)
   
   # Samples derivative
@@ -165,9 +168,9 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
     matrixSampleOverdisp <- samplesFit$eta
   }
   matrixSampleIntercept <- samplesFit$intercept
-  orderDayWeek <- as.integer(objectStan$dataForModel[order(dayId), sapply(dayWeek, function(dw) which(dw == internalConstants$levelsWeek))])
+  orderDayWeek <- as.integer(objectStan$dataForModel[includedInStan == T][order(dayId), sapply(dayWeek, function(dw) which(dw == internalConstants$levelsWeek))])
   matrixSampleNu <- t(c(matrixSampleIntercept) + t(matrixSampleGP) + t(matrixSampleRandomEffect)[, orderDayWeek])
-  vectorTestData <- objectStan$dataForModel[order(dayId), numberTest]
+  vectorTestData <- objectStan$dataForModel[includedInStan == T][order(dayId), numberTest]
   matrixSampleHyperparameters <- rbind(matrixSampleOverdisp,
                                        samplesFit$tau_w,
                                        t(samplesFit$log_theta_x))
@@ -177,8 +180,8 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
   #                  PRODUCE OUTPUT                      #
   # ---------------------------------------------------- #
   listPosteriors <- computeSummaryPosteriors(matrixSampleGP, matrixSampleGPDerivative, matrixSampleHyperparameters,
-                                      matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
-                                      vectorTestData, parametersModel)
+                                             matrixSampleNu, matrixSampleRandomEffect, matrixSampleIntercept,
+                                             vectorTestData, parametersModel)
   
   setkey(listPosteriors$posteriorGrowth, dayId)
   setkey(objectStan$dateList$dateTable, dayId)
@@ -191,9 +194,7 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
   setkey(objectStan$dataForModel, date)
   listPosteriors$posteriorTransfGP[objectStan$dataForModel, ":="(positiveResults = i.positiveResults, numberTest = i.numberTest)]
   
-  
   # Output
-  if(saveStanObject == F) objectStan <- NULL
   output_main <- list(posteriorGrowth = listPosteriors$posteriorGrowth,
                       posteriorTransfGP = listPosteriors$posteriorTransfGP,
                       posteriorRandomEffect = listPosteriors$posteriorRandomEffect,
@@ -201,6 +202,7 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
                       posteriorHyperparameters = listPosteriors$posteriorHyperparameters,
                       dateList = objectStan$dateList,
                       dataForModel = objectStan$dataForModel,
+                      parametersModel = parametersModel,
                       inferenceSettings = inferenceSettings,
                       objectStan = objectStan)
   output_samples <- list(numSamples = ncol(matrixSampleGP), # TODO check
