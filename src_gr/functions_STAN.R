@@ -113,7 +113,7 @@ runModelGrowthRate_STAN <- function(dataForModel, dateList, parametersModel, inf
                        seed = c(inferenceSettings$seed + 1),
                        sample_file = inferenceSettings$sampleFile,
                        include = T,
-                       pars = c("x_t", "w_d", "intercept", ifelse(parametersModel$linkType == "BB", "rho", "eta"), "tau_w", "log_theta_x"))
+                       pars = c("x_transf", "w_d", "intercept", ifelse(parametersModel$linkType == "BB", "rho", "eta"), "tau_w", "log_theta_x"))
   # TODO what does STAN do with NA values?
   
   # Create output
@@ -144,6 +144,8 @@ runModelGrowthRate_STAN <- function(dataForModel, dateList, parametersModel, inf
 processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, saveSamples = T, saveStanObject = F){
   # TODO process less samples than iterations??
   
+  set.seed(12345)
+  samplesToExtract <- 1000 # TODO input? # getting random subset
   internalConstants <- getInternalSettings()
   
   # ---------------------------------------------------- #
@@ -153,8 +155,9 @@ processSTANOutput <- function(objectStan, parametersModel, inferenceSettings, sa
   
   # Samples GP
   #outputFit <- data.table(summary(objectStan$modelFit)$summary, keep.rownames = T)
-  samplesFit <- extract(objectStan$modelFit) # TODO slow
-  matrixSampleGP <- t(samplesFit$x_t)
+  samplesFit <- extract(objectStan$modelFit)
+  subsetSamples <- sample(x = length(samplesFit$intercept), size = min(length(samplesFit$intercept), samplesToExtract))
+  matrixSampleGP <- t(samplesFit$x_transf)
   
   # Samples derivative
   # TODO Condition this calculation on the value of the parameter derivativeFromGP
