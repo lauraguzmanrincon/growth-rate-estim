@@ -8,8 +8,8 @@
 # TODO create basic format function for all plots
 
 #' Requires: library(ggnewscale), library(scales)
-#' outputModel$posteriorTransfGP, parametersModel$params$linkType
-plotFitting <- function(outputModel, parametersModel){
+#' outputModel$posteriorTransfGP, outputModel$parametersModel$linkType
+plotFitting <- function(outputModel){
   if(!"ggnewscale" %in% (.packages())) stop("This action requires package ggnewscale. Try library(ggnewscale)")
   if(!"scales" %in% (.packages())) stop("This action requires package scales. Try library(scales)")
   
@@ -35,7 +35,7 @@ plotFitting <- function(outputModel, parametersModel){
     scale_x_date(expand = c(0,0)) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), axis.title.x = element_blank(),
           legend.key = element_blank(), panel.grid.major.x = element_line(linetype = 2, colour = "gray90")) # 0.6
-  if(parametersModel$linkType == "BB"){
+  if(outputModel$parametersModel$linkType == "BB"){
     p02 <- p01 +
       new_scale_color() +
       scale_colour_manual(name = "proportion of positives", values = colourDots) +
@@ -366,7 +366,7 @@ plotHyperparametersGPStackFn <- function(outputModelList, parametersModel, listL
 #' TODO requires additional package: ggtree
 plotProjection <- function(listProjection, outputModel, futureTable = NULL, minDate = NULL, plotGP = F){
   # TODO make better plot
-  if(is.null(minDate)) minDate <- listProjection$currentDate - 30
+  if(is.null(minDate)) minDate <- outputModel$dateList$minDate #listProjection$currentDate - 30
   sizePrediction <- listProjection$sizePrediction
   maxDate <- listProjection$currentDate + sizePrediction
   
@@ -433,9 +433,9 @@ plotProjection <- function(listProjection, outputModel, futureTable = NULL, minD
   
   if(plotGP == T){
     ggP1 <- ggP1 +
-      geom_ribbon(aes(ymin = q0.025_GP, ymax = q0.975_GP), fill = "#EFDABD", alpha = 0.5) +
-      geom_ribbon(aes(ymin = q0.25_GP, ymax = q0.75_GP), fill = "#D7A35B", alpha = 0.5) +
-      geom_line(aes(y = median_GP), colour = "#31220C") +
+      geom_ribbon(aes(ymin = q0.025_transConsGP, ymax = q0.975_transConsGP), fill = "#EFDABD", alpha = 0.5) +
+      geom_ribbon(aes(ymin = q0.25_transConsGP, ymax = q0.75_transConsGP), fill = "#D7A35B", alpha = 0.5) +
+      geom_line(aes(y = median_transConsGP), colour = "#31220C") +
       geom_ribbon(data = dataToPlotAfter, aes(ymin = gpConsTrans_q025, ymax = gpConsTrans_q975), fill = "#EFDABD", alpha = 0.5) +
       geom_ribbon(data = dataToPlotAfter, aes(ymin = gpConsTrans_q25, ymax = gpConsTrans_q75), fill = "#D7A35B", alpha = 0.5) +
       geom_line(data = dataToPlotAfter, aes(y = gpConsTrans_median), colour = "#31220C")
